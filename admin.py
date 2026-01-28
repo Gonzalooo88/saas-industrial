@@ -12,34 +12,30 @@ except ImportError:
     st.error("❌ No encuentro el archivo config.py en esta carpeta.")
     st.stop()
 
-# --- CONFIGURACIÓN DE TU PANEL ---
+# --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Super Admin SaaS", page_icon="🛠️", layout="wide")
 
-# -----------------------------------------------------------------------------
-# CONFIGURACIÓN DEL DOMINIO (Para los links de invitación)
-# -----------------------------------------------------------------------------
-# Cambia esto por tu URL real cuando lo subas a producción
-# Ej: "https://mi-saas-industrial.streamlit.app"
-URL_BASE = st.sidebar.text_input("URL de tu App (Para generar links)", value="http://localhost:8501")
+# URL FIJA DE TU APP (Para generar invitaciones)
+URL_APP = "https://saas-industrial-vbqr4pex367axdvgtuxiyw.streamlit.app"
 
-st.title("🛠️ Tu Panel de Control (Super Admin)")
-st.markdown("Desde aquí controlas la arquitectura de tu SaaS. **Sin login.**")
+st.title("🛠️ Panel de Control")
+st.caption(f"🔗 Dominio configurado: `{URL_APP}`") # <--- AQUI ESTA EL CAMBIO ESTETICO
 st.markdown("---")
 
 # ==============================================================================
-# TABS DE GESTIÓN
+# TABS
 # ==============================================================================
 tab_gestion, tab_crear_cliente, tab_crear_usuario = st.tabs([
-    "🎛️ Gestionar Clientes y Usuarios", 
-    "🏭 Crear Nueva Empresa", 
-    "👤 Agregar Empleado a Empresa"
+    "🎛️ Clientes y Usuarios", 
+    "🏭 Nueva Empresa", 
+    "👤 Nuevo Empleado"
 ])
 
 # ------------------------------------------------------------------------------
-# TAB 1: GESTIÓN (CLIENTES + USUARIOS)
+# TAB 1: GESTIÓN COMPLETA
 # ------------------------------------------------------------------------------
 with tab_gestion:
-    st.subheader("Estado de Clientes y sus Usuarios")
+    st.subheader("Directorio de Empresas")
     
     ref_instancias = db.collection('instancias')
     docs = ref_instancias.stream()
@@ -51,167 +47,120 @@ with tab_gestion:
         lista_clientes.append(d)
         
     if not lista_clientes:
-        st.info("No hay empresas creadas.")
+        st.info("No hay empresas registradas.")
     else:
         for cli in lista_clientes:
             # --- TARJETA DE EMPRESA ---
             with st.container(border=True):
-                # CABECERA DE LA EMPRESA
-                c1, c2, c3 = st.columns([3, 1, 1])
+                c1, c2 = st.columns([3, 1])
                 
                 with c1:
-                    st.markdown(f"### 🏢 {cli['nombre']} (`{cli['id']}`)")
-                    st.caption(f"Creado: {cli.get('creado_el', 'S/F')}")
-                    
-                    # Generamos el link mágico
-                    # Suponemos que tu app leerá ?empresa=facha_shila
-                    link_invitacion = f"{URL_BASE}/?empresa={cli['id']}"
-                    st.code(link_invitacion, language="text")
-                    st.caption("👆 Copia este link para que los empleados entren directo a esta empresa.")
+                    st.markdown(f"### 🏢 {cli.get('nombre', 'Sin Nombre')} (`{cli['id']}`)")
+                    # Link de invitación limpio
+                    link = f"{URL_APP}/?empresa={cli['id']}"
+                    st.text_input(f"Link Invitación {cli['nombre']}", value=link, disabled=True, key=f"lnk_{cli['id']}")
 
                 with c2:
-                    st.write("**Estado Empresa**")
-                    estado_actual = cli.get('activo', True)
-                    nuevo_estado = st.toggle("Habilitada", value=estado_actual, key=f"tg_cli_{cli['id']}")
-                    
-                    if nuevo_estado != estado_actual:
-                        ref_instancias.document(cli['id']).update({"activo": nuevo_estado})
-                        st.toast(f"Empresa {cli['id']} actualizada.")
-                        tm.sleep(0.5)
+                    st.write("**Estado**")
+                    act = cli.get('activo', True)
+                    if st.toggle("Activo", value=act, key=f"tg_cli_{cli['id']}") != act:
+                        ref_instancias.document(cli['id']).update({"activo": not act})
                         st.rerun()
                 
-                with c3:
-                    if st.button("🗑️ Borrar Emp.", key=f"del_cli_{cli['id']}"):
-                        st.error("Acción bloqueada por seguridad. Hazlo en Firebase.")
-
-                st.divider()
-                
-                # --- LISTADO DE USUARIOS DE ESTA EMPRESA ---
-                with st.expander(f"👥 Ver Usuarios de {cli['nombre']}"):
-                    # Buscamos SOLO los usuarios de esta carpeta
+                # --- GESTIÓN DE USUARIOS DE ESTA EMPRESA ---
+                with st.expander(f"👥 Gestionar Usuarios de {cli['nombre']}"):
                     users_ref = db.collection('saas_usuarios_global')
                     query = users_ref.where('carpeta_instancia', '==', cli['id']).stream()
-                    users_list = []
+                    
+                    users = []
                     for u in query:
                         ud = u.to_dict()
-                        ud['doc_id'] = u.id
-                        users_list.append(ud)
+                        ud['uid'] = u.id
+                        users.append(ud)
                     
-                    if not users_list:
-                        st.warning("Esta empresa no tiene usuarios asignados.")
+                    if not users:
+                        st.warning("Sin usuarios.")
                     else:
-                        # Encabezados de tabla
-                        h1, h2, h3, h4 = st.columns([2, 2, 1, 1])
-                        h1.markdown("**Usuario**")
-                        h2.markdown("**Rol / Pass**")
-                        h3.markdown("**Acceso**")
-                        h4.markdown("**Acción**")
-                        
-                        for user in users_list:
-                            uc1, uc2, uc3, uc4 = st.columns([2, 2, 1, 1])
-                            
-                            with uc1:
-                                st.write(f"👤 {user.get('usuario')}")
+                        for u in users:
+                            uc1, uc2, uc3 = st.columns([2, 1, 1])
+                            uc1.write(f"👤 **{u['usuario']}** ({u.get('rol')})")
+                            uc1.caption(f"Pass: {u.get('password')}")
                             
                             with uc2:
-                                st.caption(f"Rol: {user.get('rol')}")
-                                # Opcional: Mostrar contraseña si eres super admin
-                                st.caption(f"🔑 {user.get('password')}") 
+                                u_act = u.get('activo', True)
+                                if st.checkbox("Habilitado", value=u_act, key=f"u_act_{u['uid']}") != u_act:
+                                    users_ref.document(u['uid']).update({"activo": not u_act})
+                                    st.toast("Estado usuario actualizado")
+                                    tm.sleep(0.5)
+                                    st.rerun()
                             
                             with uc3:
-                                # TOGGLE USUARIO INDIVIDUAL
-                                act_user = user.get('activo', True)
-                                if st.toggle("On/Off", value=act_user, key=f"tg_usr_{user['doc_id']}") != act_user:
-                                    users_ref.document(user['doc_id']).update({"activo": not act_user})
-                                    st.toast(f"Usuario {user.get('usuario')} actualizado.")
+                                if st.button("🗑️", key=f"del_{u['uid']}"):
+                                    users_ref.document(u['uid']).delete()
+                                    st.toast("Usuario eliminado")
                                     tm.sleep(0.5)
                                     st.rerun()
-                            
-                            with uc4:
-                                # BORRAR USUARIO
-                                if st.button("❌", key=f"del_usr_{user['doc_id']}", help="Eliminar usuario permanentemente"):
-                                    users_ref.document(user['doc_id']).delete()
-                                    st.toast(f"Usuario eliminado.")
-                                    tm.sleep(0.5)
-                                    st.rerun()
-                            st.markdown("---")
+                            st.divider()
 
 # ------------------------------------------------------------------------------
-# TAB 2: CREAR NUEVA EMPRESA
+# TAB 2: CREAR EMPRESA
 # ------------------------------------------------------------------------------
 with tab_crear_cliente:
-    st.subheader("🚀 Alta de Nuevo Cliente")
-    
-    with st.form("form_nueva_empresa"):
-        col_a, col_b = st.columns(2)
-        nombre_fantasia = col_a.text_input("Nombre del Negocio", placeholder="Ej: Facha & Shila")
-        id_carpeta = col_b.text_input("ID de Carpeta (Sin espacios)", placeholder="Ej: facha_shila")
+    st.subheader("Alta de Empresa")
+    with st.form("new_corp"):
+        c1, c2 = st.columns(2)
+        nombre = c1.text_input("Nombre Fantasía")
+        id_carp = c2.text_input("ID Carpeta (único, sin espacios)")
         
-        st.markdown("#### Datos del Dueño (Primer Acceso)")
-        col_c, col_d = st.columns(2)
-        user_admin = col_c.text_input("Usuario Login")
-        pass_admin = col_d.text_input("Contraseña")
+        st.markdown("**Usuario Admin Inicial**")
+        c3, c4 = st.columns(2)
+        u_adm = c3.text_input("Usuario")
+        p_adm = c4.text_input("Contraseña")
         
-        if st.form_submit_button("Crear Infraestructura"):
-            if id_carpeta and user_admin and pass_admin:
-                doc_check = ref_instancias.document(id_carpeta).get()
-                if doc_check.exists:
-                    st.error("⚠️ Ya existe una carpeta con ese ID.")
+        if st.form_submit_button("Crear"):
+            if id_carp and u_adm and p_adm:
+                check = ref_instancias.document(id_carp).get()
+                if check.exists:
+                    st.error("ID ocupado.")
                 else:
-                    # 1. Crear Carpeta
-                    ref_instancias.document(id_carpeta).set({
-                        "nombre": nombre_fantasia,
-                        "creado_el": datetime.datetime.now(),
-                        "activo": True
+                    # Crear carpeta
+                    ref_instancias.document(id_carp).set({
+                        "nombre": nombre, "creado_el": datetime.datetime.now(), "activo": True
                     })
-                    # 2. Crear Usuario Admin Global
+                    # Crear admin
                     db.collection('saas_usuarios_global').add({
-                        "usuario": user_admin,
-                        "password": pass_admin,
-                        "rol": "admin",
-                        "carpeta_instancia": id_carpeta,
-                        "activo": True,
-                        "fecha_alta": datetime.datetime.now()
+                        "usuario": u_adm, "password": p_adm, "rol": "admin",
+                        "carpeta_instancia": id_carp, "activo": True, "fecha_alta": datetime.datetime.now()
                     })
-                    st.success(f"✅ Empresa {nombre_fantasia} creada.")
-                    tm.sleep(1.5)
+                    st.success("Empresa creada.")
+                    tm.sleep(1)
                     st.rerun()
-            else:
-                st.warning("Completa todos los campos.")
 
 # ------------------------------------------------------------------------------
 # TAB 3: AGREGAR EMPLEADO
 # ------------------------------------------------------------------------------
 with tab_crear_usuario:
-    st.subheader("👤 Agregar Empleado a Cliente Existente")
-    
-    opciones_carpetas = [c['id'] for c in lista_clientes]
-    
-    if not opciones_carpetas:
-        st.warning("Primero crea una empresa.")
+    st.subheader("Alta de Empleado")
+    opts = [c['id'] for c in lista_clientes]
+    if not opts:
+        st.warning("No hay empresas.")
     else:
-        with st.form("form_nuevo_empleado"):
-            target_carpeta = st.selectbox("¿A qué empresa pertenece?", opciones_carpetas)
-            
+        with st.form("new_emp"):
+            empresa = st.selectbox("Empresa", opts)
             c1, c2, c3 = st.columns(3)
-            new_user = c1.text_input("Usuario")
-            new_pass = c2.text_input("Contraseña")
-            new_rol = c3.selectbox("Rol", ["vendedor", "empleado", "admin"])
+            usr = c1.text_input("Usuario")
+            pwd = c2.text_input("Pass")
+            rol = c3.selectbox("Rol", ["vendedor", "empleado", "admin"])
             
-            if st.form_submit_button("Registrar Usuario"):
-                if new_user and new_pass:
-                    q = db.collection('saas_usuarios_global').where("usuario", "==", new_user).stream()
-                    if len(list(q)) > 0:
-                        st.error("⚠️ Ese usuario ya existe.")
-                    else:
-                        db.collection('saas_usuarios_global').add({
-                            "usuario": new_user,
-                            "password": new_pass,
-                            "rol": new_rol,
-                            "carpeta_instancia": target_carpeta,
-                            "activo": True,
-                            "fecha_alta": datetime.datetime.now()
-                        })
-                        st.success(f"✅ Usuario `{new_user}` agregado a `{target_carpeta}`.")
-                        tm.sleep(1.5)
-                        st.rerun()
+            if st.form_submit_button("Crear Usuario"):
+                check = db.collection('saas_usuarios_global').where("usuario", "==", usr).stream()
+                if len(list(check)) > 0:
+                    st.error("Usuario ya existe.")
+                else:
+                    db.collection('saas_usuarios_global').add({
+                        "usuario": usr, "password": pwd, "rol": rol,
+                        "carpeta_instancia": empresa, "activo": True, "fecha_alta": datetime.datetime.now()
+                    })
+                    st.success("Usuario creado.")
+                    tm.sleep(1)
+                    st.rerun()
