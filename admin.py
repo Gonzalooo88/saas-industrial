@@ -1,12 +1,8 @@
 import streamlit as st
 import pandas as pd
+import datetime # Solo importamos datetime para las fechas
 import os
 import sys
-
-# --- SOLUCIÓN DEFINITIVA AL ERROR ---
-import time as tm  # Le ponemos un apodo 'tm' para que Python NO se confunda nunca más
-import datetime    # Usamos datetime completo
-# ------------------------------------
 
 # --- CONEXIÓN CON CONFIG.PY ---
 ruta_raiz = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
@@ -91,7 +87,7 @@ with tab_retro:
                     batch = db.batch()
                     batch.update(ref_stock.document(pid_sel), {"variantes": mis_vars})
                     
-                    # USAMOS datetime.time DIRECTAMENTE
+                    # Fecha y hora fija (usando datetime correctamente)
                     hora_fija = datetime.time(12, 0, 0)
                     fecha_full = datetime.datetime.combine(fecha_elegida, hora_fija)
                     
@@ -108,9 +104,7 @@ with tab_retro:
                     
                     batch.commit()
                     st.success("Guardado.")
-                    
-                    # --- AQUI USAMOS EL APODO 'tm' ---
-                    tm.sleep(1) 
+                    # SIN PAUSA, recarga directa
                     st.rerun()
                 except Exception as e:
                     st.error(str(e))
@@ -134,9 +128,7 @@ with tab_producto:
         if st.button("🔥 Eliminar Definitivamente", type="primary"):
             db.collection(COLECCION_PRODUCTOS).document(id_del).delete()
             st.toast("Eliminado")
-            
-            # --- AQUI USAMOS EL APODO 'tm' ---
-            tm.sleep(1)
+            # SIN PAUSA
             st.rerun()
 
 # ==============================================================================
@@ -173,8 +165,6 @@ with tab_ventas:
             
             if st.button("🗑️ Confirmar Borrado", type="primary"):
                 ref_movs.document(id_mov).delete()
-                st.success("Venta eliminada.")
-                
-                # --- SOLUCION DEFINITIVA: USAMOS 'tm' ---
-                tm.sleep(1.5) 
+                # Eliminamos el st.success y el sleep para evitar errores
+                st.toast("Venta eliminada correctamente") 
                 st.rerun()
