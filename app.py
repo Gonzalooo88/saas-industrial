@@ -40,7 +40,7 @@ def login():
                 return
 
             try:
-                # 1. BUSCAMOS EN LA GUÍA GLOBAL (La que crea tu Admin Nuevo)
+                # 1. BUSCAMOS EN LA GUÍA GLOBAL
                 users_ref = db.collection('saas_usuarios_global')
                 query = users_ref.where('usuario', '==', user_input).where('password', '==', pass_input).stream()
                 
@@ -51,12 +51,12 @@ def login():
                 else:
                     user_data = results[0].to_dict()
                     
-                    # 2. VERIFICAMOS SI EL USUARIO ESTÁ ACTIVO (Toggle Individual)
+                    # 2. VERIFICAMOS SI EL USUARIO ESTÁ ACTIVO
                     if not user_data.get('activo', True):
                         st.error("⛔ Tu usuario ha sido deshabilitado por el administrador.")
                         return
 
-                    # 3. VERIFICAMOS SI LA EMPRESA ESTÁ ACTIVA (Toggle Maestro)
+                    # 3. VERIFICAMOS SI LA EMPRESA ESTÁ ACTIVA
                     carpeta = user_data.get('carpeta_instancia')
                     instancia_doc = db.collection('instancias').document(carpeta).get()
                     
@@ -66,6 +66,7 @@ def login():
                             st.error("🏢 La empresa a la que perteneces está suspendida temporalmente.")
                             return
                     else:
+                        # Si no existe la carpeta en 'instancias', es un error crítico de datos
                         st.warning(f"⚠️ Error de sistema: No encuentro la carpeta '{carpeta}'. Contacta soporte.")
                         return
 
@@ -73,7 +74,7 @@ def login():
                     st.session_state.logueado = True
                     st.session_state.usuario = user_data['usuario']
                     st.session_state.rol = user_data['rol']
-                    st.session_state.carpeta_cliente = carpeta # <--- ESTA ES LA CLAVE
+                    st.session_state.carpeta_cliente = carpeta 
                     
                     st.success(f"Bienvenido {user_data['usuario']} ({carpeta})")
                     tm.sleep(1)
@@ -108,16 +109,13 @@ else:
             logout()
 
     # --- RUTEO DE PÁGINAS ---
-    # Aquí definimos qué páginas ve el usuario según su rol o simplemente cargamos las de la carpeta
-    # NOTA: Como ahora usamos una estructura estándar, las páginas deberían ser genéricas.
-    
-    # IMPORTANTE: Aquí es donde conectaremos tus archivos 1_ventas.py, etc.
-    # Por ahora, usaré un selector simple para probar que el login funciona.
+    # Aquí cargamos el archivo de Inicio primero y corregimos el ícono de Caja
     
     pg = st.navigation([
+        st.Page("instancias_clientes/facha_shila/0_inicio.py", title="Inicio", icon="🏠"),
         st.Page("instancias_clientes/facha_shila/1_ventas.py", title="💰 Ventas", icon="🛒"),
         st.Page("instancias_clientes/facha_shila/2_stock.py", title="📦 Stock", icon="📦"),
-        st.Page("instancias_clientes/facha_shila/3_caja.py", title="💵 Caja", icon="qh"),
+        st.Page("instancias_clientes/facha_shila/3_caja.py", title="💵 Caja", icon="💵"), # Icono corregido
         st.Page("instancias_clientes/facha_shila/4_admin.py", title="⚙️ Admin Local", icon="⚙️"),
     ])
     
@@ -125,4 +123,4 @@ else:
         pg.run()
     except Exception as e:
         st.error(f"Error cargando la página: {e}")
-        st.info("💡 Nota: Las páginas de Ventas/Stock darán error hasta que las actualicemos para usar la 'carpeta_cliente' nueva.")
+        st.info("💡 Posible causa: Verifica que todos los archivos (0_inicio, 1_ventas, etc.) existan en la carpeta.")

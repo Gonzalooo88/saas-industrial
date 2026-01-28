@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import datetime 
+import time as tm # Usamos alias para evitar conflicto con datetime
 import os
 import sys
 
@@ -15,10 +16,17 @@ except Exception as e:
     st.error(f"Error de conexión: {e}")
     st.stop()
 
-# --- CONFIGURACIÓN ---
-cliente_id = os.path.basename(os.path.dirname(__file__))
-COLECCION_PRODUCTOS = f"{cliente_id}_productos"
-COLECCION_MOVIMIENTOS = f"{cliente_id}_movimientos"
+# --- VERIFICACIÓN DE SESIÓN (SEGURIDAD) ---
+if 'carpeta_cliente' not in st.session_state:
+    st.error("🚫 Sesión no iniciada. Por favor ve al Login.")
+    st.stop()
+
+# --- CONFIGURACIÓN DE RUTAS (NUEVA ESTRUCTURA) ---
+cliente_id = st.session_state.carpeta_cliente # Ej: "facha_shila"
+
+# Referencias a las SUB-COLECCIONES (Estructura Anidada)
+ref_productos = db.collection('instancias').document(cliente_id).collection('productos')
+ref_movimientos = db.collection('instancias').document(cliente_id).collection('movimientos')
 
 st.header(f"⚙️ Admin: {cliente_id.replace('_', ' ').title()}")
 
@@ -39,8 +47,8 @@ tab_retro, tab_producto, tab_ventas = st.tabs([
 with tab_retro:
     st.subheader("Cargar venta pasada")
     
-    ref_stock = db.collection(COLECCION_PRODUCTOS)
-    docs = ref_stock.stream()
+    # Usamos la nueva referencia
+    docs = ref_productos.stream()
     
     opciones_productos = {}
     datos_completos = {} 
@@ -81,17 +89,21 @@ with tab_retro:
                     total = info.get('precio_venta', 0) * cant
                     ganancia = (info.get('precio_venta', 0) - info.get('costo', 0)) * cant
                     
+                    # Restar Stock en memoria
                     mis_vars[idx_var]['stock'] -= cant
                     
                     batch = db.batch()
-                    batch.update(ref_stock.document(pid_sel), {"variantes": mis_vars})
+                    # Actualizar Producto
+                    batch.update(ref_productos.document(pid_sel), {"variantes": mis_vars})
                     
+                    # Fecha con hora fija (usando datetime.time explícito)
                     hora_fija = datetime.time(12, 0, 0)
                     fecha_full = datetime.datetime.combine(fecha_elegida, hora_fija)
                     
                     desc = f"{info['modelo']} ({mi_var['talle']} {mi_var['color']})"
                     
-                    batch.add(db.collection(COLECCION_MOVIMIENTOS), {
+                    # Guardar Movimiento
+                    batch.add(ref_movimientos, {
                         "fecha": fecha_full,
                         "tipo": "Venta Retroactiva",
                         "productos": [desc],
@@ -102,6 +114,7 @@ with tab_retro:
                     
                     batch.commit()
                     st.success("Guardado.")
+                    tm.sleep(1) # Pausa segura para ver el mensaje
                     st.rerun()
                 except Exception as e:
                     st.error(str(e))
@@ -123,8 +136,9 @@ with tab_producto:
     if sel_del:
         id_del = lista_borrar[sel_del]
         if st.button("🔥 Eliminar Definitivamente", type="primary"):
-            db.collection(COLECCION_PRODUCTOS).document(id_del).delete()
+            ref_productos.document(id_del).delete()
             st.toast("Producto eliminado")
+            tm.sleep(1)
             st.rerun()
 
 # ==============================================================================
@@ -133,8 +147,8 @@ with tab_producto:
 with tab_ventas:
     st.subheader("Anular Venta")
     
-    ref_movs = db.collection(COLECCION_MOVIMIENTOS)
-    docs_m = ref_movs.order_by("fecha", direction="DESCENDING").limit(50).stream()
+    # Usamos la nueva referencia de movimientos
+    docs_m = ref_movimientos.order_by("fecha", direction="DESCENDING").limit(50).stream()
     
     lista_m = []
     for doc in docs_m:
@@ -160,6 +174,7 @@ with tab_ventas:
             st.caption("Nota: El stock NO se repone automáticamente.")
             
             if st.button("🗑️ Confirmar Borrado", type="primary"):
-                ref_movs.document(id_mov).delete()
+                ref_movimientos.document(id_mov).delete()
                 st.toast("Venta eliminada") 
+                tm.sleep(1)
                 st.rerun()
