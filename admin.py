@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import datetime # Solo importamos datetime para las fechas
+import datetime 
 import os
 import sys
 
@@ -81,13 +81,11 @@ with tab_retro:
                     total = info.get('precio_venta', 0) * cant
                     ganancia = (info.get('precio_venta', 0) - info.get('costo', 0)) * cant
                     
-                    # Restar Stock
                     mis_vars[idx_var]['stock'] -= cant
                     
                     batch = db.batch()
                     batch.update(ref_stock.document(pid_sel), {"variantes": mis_vars})
                     
-                    # Fecha y hora fija (usando datetime correctamente)
                     hora_fija = datetime.time(12, 0, 0)
                     fecha_full = datetime.datetime.combine(fecha_elegida, hora_fija)
                     
@@ -104,7 +102,6 @@ with tab_retro:
                     
                     batch.commit()
                     st.success("Guardado.")
-                    # SIN PAUSA, recarga directa
                     st.rerun()
                 except Exception as e:
                     st.error(str(e))
@@ -127,8 +124,7 @@ with tab_producto:
         id_del = lista_borrar[sel_del]
         if st.button("🔥 Eliminar Definitivamente", type="primary"):
             db.collection(COLECCION_PRODUCTOS).document(id_del).delete()
-            st.toast("Eliminado")
-            # SIN PAUSA
+            st.toast("Producto eliminado")
             st.rerun()
 
 # ==============================================================================
@@ -165,6 +161,5 @@ with tab_ventas:
             
             if st.button("🗑️ Confirmar Borrado", type="primary"):
                 ref_movs.document(id_mov).delete()
-                # Eliminamos el st.success y el sleep para evitar errores
-                st.toast("Venta eliminada correctamente") 
+                st.toast("Venta eliminada") 
                 st.rerun()
