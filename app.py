@@ -21,7 +21,7 @@ INFO_MODULOS = {
     "0_inicio.py": {"titulo": "Inicio", "icon": "🏠"},
     "1_ventas.py": {"titulo": "Ventas", "icon": "🛒"},
     "2_stock.py":  {"titulo": "Stock",  "icon": "📦"},
-    "3_caja.py":   {"titulo": "Caja",   "icon": "💵"},
+    "3_movimientos.py":   {"titulo": "Caja",   "icon": "💵"},
     "4_admin.py":  {"titulo": "Admin",  "icon": "⚙️"},
 }
 
