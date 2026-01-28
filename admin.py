@@ -1,9 +1,12 @@
 import streamlit as st
 import pandas as pd
-import time as reloj_sistema  # 👈 TRUCO MAESTRO: Le cambiamos el nombre para no confundirnos
-from datetime import datetime, time, date
 import os
 import sys
+
+# --- IMPORTACIONES LIMPIAS (SIN CONFLICTOS) ---
+import time       # Módulo para pausar (sleep)
+import datetime   # Módulo para fechas y horas
+# ---------------------------------------------
 
 # --- CONEXIÓN CON CONFIG.PY ---
 ruta_raiz = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
@@ -23,13 +26,11 @@ COLECCION_MOVIMIENTOS = f"{cliente_id}_movimientos"
 
 st.header(f"⚙️ Admin: {cliente_id.replace('_', ' ').title()}")
 
-# Bloqueo de seguridad
 bloqueo = st.toggle("🔓 Habilitar Edición", value=False)
 if not bloqueo:
     st.info("Activa el interruptor para editar.")
     st.stop()
 
-# TABS
 tab_retro, tab_producto, tab_ventas = st.tabs([
     "📅 Cargar Venta Pasada", 
     "📦 Eliminar Producto", 
@@ -42,7 +43,6 @@ tab_retro, tab_producto, tab_ventas = st.tabs([
 with tab_retro:
     st.subheader("Cargar venta pasada")
     
-    # Traer productos
     ref_stock = db.collection(COLECCION_PRODUCTOS)
     docs = ref_stock.stream()
     
@@ -91,8 +91,9 @@ with tab_retro:
                     batch = db.batch()
                     batch.update(ref_stock.document(pid_sel), {"variantes": mis_vars})
                     
-                    # Fecha con hora fija (mediodía)
-                    fecha_full = datetime.combine(fecha_elegida, time(12, 0, 0))
+                    # USO CORRECTO DE FECHA/HORA
+                    hora_fija = datetime.time(12, 0, 0) # Hora del reloj
+                    fecha_full = datetime.datetime.combine(fecha_elegida, hora_fija)
                     
                     desc = f"{info['modelo']} ({mi_var['talle']} {mi_var['color']})"
                     
@@ -107,7 +108,9 @@ with tab_retro:
                     
                     batch.commit()
                     st.success("Guardado.")
-                    reloj_sistema.sleep(1) # 👈 AQUI USAMOS EL NUEVO NOMBRE
+                    
+                    # USO CORRECTO DEL PAUSAR
+                    time.sleep(1) 
                     st.rerun()
                 except Exception as e:
                     st.error(str(e))
@@ -131,7 +134,7 @@ with tab_producto:
         if st.button("🔥 Eliminar Definitivamente", type="primary"):
             db.collection(COLECCION_PRODUCTOS).document(id_del).delete()
             st.toast("Eliminado")
-            reloj_sistema.sleep(1) # 👈 NUEVO NOMBRE
+            time.sleep(1)
             st.rerun()
 
 # ==============================================================================
@@ -147,8 +150,11 @@ with tab_ventas:
     for doc in docs_m:
         d = doc.to_dict()
         if d.get('tipo') in ['Venta', 'Venta Retroactiva']:
-            f_str = d['fecha'].strftime('%d/%m %H:%M') if d.get('fecha') else "S/F"
-            # Manejo seguro de productos (lista o string)
+            # Manejo de fecha
+            f_obj = d.get('fecha')
+            f_str = f_obj.strftime('%d/%m %H:%M') if f_obj else "S/F"
+            
+            # Manejo de productos
             prods = d.get('productos', [])
             p_txt = ", ".join(prods) if isinstance(prods, list) else str(d.get('producto_modelo', 'Varios'))
             
@@ -168,6 +174,6 @@ with tab_ventas:
             if st.button("🗑️ Confirmar Borrado", type="primary"):
                 ref_movs.document(id_mov).delete()
                 st.success("Venta eliminada.")
-                # 👇 AQUÍ ES DONDE FALLABA. Ahora usamos el alias.
-                reloj_sistema.sleep(1.5) 
+                # USO CORRECTO DEL PAUSAR
+                time.sleep(1.5) 
                 st.rerun()
