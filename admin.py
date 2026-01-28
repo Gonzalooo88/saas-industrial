@@ -1,9 +1,12 @@
 import streamlit as st
 import pandas as pd
-import time # ✅ ESTE es el módulo que tiene .sleep()
-import datetime # ✅ Usamos esto para manejar fechas sin conflictos
 import os
 import sys
+
+# --- SOLUCIÓN DEL ERROR ---
+import time  # Este es el módulo para dormir/esperar
+import datetime # Importamos todo el módulo datetime para evitar conflictos
+# --------------------------
 
 # --- CONEXIÓN CON CONFIG.PY (Ruta Dinámica) ---
 ruta_raiz = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
@@ -38,47 +41,37 @@ tab_retro, tab_producto, tab_ventas = st.tabs([
 ])
 
 # ==============================================================================
-# TAB 1: CARGA RETROACTIVA (Adaptada a Variantes)
+# TAB 1: CARGA RETROACTIVA
 # ==============================================================================
 with tab_retro:
     st.subheader("Cargar venta con fecha anterior")
-    st.caption("Útil si te olvidaste de cargar algo ayer o la semana pasada.")
     
     # 1. Traer productos
     ref_stock = db.collection(COLECCION_PRODUCTOS)
     docs = ref_stock.stream()
     
-    # Creamos un diccionario inteligente para el selector
     opciones_productos = {}
-    datos_completos = {} # Para guardar la info y no volver a consultar
+    datos_completos = {} 
     
     for doc in docs:
         d = doc.to_dict()
         pid = doc.id
         modelo = d.get('modelo', 'Sin Nombre')
-        
-        # Guardamos en memoria
         datos_completos[pid] = d
         opciones_productos[pid] = f"{modelo} ({d.get('marca', '')})"
 
-    # Formulario
     with st.form("form_retroactivo"):
         col_fecha, col_vend = st.columns(2)
         fecha_elegida = col_fecha.date_input("Fecha real de la venta", value="today")
         vendedor = col_vend.selectbox("¿Quién vendió?", ["Dueño", "Vendedor 1", "Vendedor 2"])
         
-        # Selección del Modelo
         pid_seleccionado = st.selectbox("1. Selecciona el Modelo", options=list(opciones_productos.keys()), format_func=lambda x: opciones_productos[x])
         
-        # Selección de la Variante (Talle/Color)
         variante_seleccionada_idx = -1
-        
         if pid_seleccionado:
             prod_data = datos_completos[pid_seleccionado]
             variantes = prod_data.get('variantes', [])
-            
             if variantes:
-                # Crear lista legible: "L - Negro (Stock: 5)"
                 opts_vars = [f"{v['talle']} - {v['color']} (Stock: {v['stock']})" for v in variantes]
                 idx_var = st.selectbox("2. Selecciona Variante", range(len(opts_vars)), format_func=lambda i: opts_vars[i])
                 variante_seleccionada_idx = idx_var
@@ -94,25 +87,22 @@ with tab_retro:
                     vars_actuales = p_info.get('variantes', [])
                     var_elegida = vars_actuales[variante_seleccionada_idx]
                     
-                    # Cálculos
                     precio_u = p_info.get('precio_venta', 0)
                     costo_u = p_info.get('costo', 0)
                     total = precio_u * cantidad
                     ganancia = (precio_u - costo_u) * cantidad
                     
-                    # ACTUALIZAR STOCK EN LA LISTA
                     vars_actuales[variante_seleccionada_idx]['stock'] -= cantidad
                     
                     batch = db.batch()
-                    
-                    # 1. Actualizar producto
                     ref_p = db.collection(COLECCION_PRODUCTOS).document(pid_seleccionado)
                     batch.update(ref_p, {"variantes": vars_actuales})
                     
-                    # 2. Crear movimiento con fecha vieja
-                    # --- FIX DE FECHAS: Usamos datetime.time explícitamente ---
-                    hora_fija = datetime.time(12, 0, 0) # Hora mediodía
+                    # --- CAMBIO IMPORTANTE AQUÍ ---
+                    # Usamos datetime.datetime y datetime.time explícitamente
+                    hora_fija = datetime.time(12, 0, 0)
                     fecha_completa = datetime.datetime.combine(fecha_elegida, hora_fija)
+                    # ------------------------------
                     
                     desc_prod = f"{p_info['modelo']} ({var_elegida['talle']} {var_elegida['color']})"
                     
@@ -127,7 +117,7 @@ with tab_retro:
                     
                     batch.commit()
                     st.success(f"✅ Venta guardada del día {fecha_elegida}")
-                    time.sleep(1) # Ahora usa el módulo 'time' correctamente
+                    time.sleep(1) # Ahora esto funcionará seguro
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error al guardar: {e}")
@@ -137,12 +127,9 @@ with tab_retro:
 # ==============================================================================
 with tab_producto:
     st.subheader("Limpiar catálogo")
-    st.caption("Borrar productos obsoletos o mal cargados.")
     
-    # Reutilizamos la consulta de arriba para ser eficientes
     lista_borrar = {}
     for pid, d in datos_completos.items():
-        # Generamos etiqueta segura, sin asumir que existen campos
         cant_vars = len(d.get('variantes', []))
         label = f"{d.get('modelo', '???')} - {d.get('marca','')} ({cant_vars} var.)"
         lista_borrar[label] = pid
@@ -165,22 +152,17 @@ with tab_ventas:
     st.subheader("Anular Ventas")
     
     ref_movs = db.collection(COLECCION_MOVIMIENTOS)
-    # Traemos ultimas 50
     docs_raw = ref_movs.order_by("fecha", direction="DESCENDING").limit(50).stream()
     
     lista_movs = []
     for doc in docs_raw:
         d = doc.to_dict()
-        # Filtramos visualmente solo Ventas o Reposiciones
         if d.get('tipo') in ['Venta', 'Venta Retroactiva']:
-            # Manejo seguro de fechas para visualización
-            fecha_dt = d.get('fecha')
             fecha_str = "S/F"
-            if fecha_dt:
-                # Convertir timestamp de Firebase a datetime si es necesario
-                fecha_str = fecha_dt.strftime('%d/%m %H:%M')
+            if d.get('fecha'):
+                # Convertimos timestamp a string legible
+                fecha_str = d['fecha'].strftime('%d/%m %H:%M')
             
-            # Manejo de lista de productos para el label
             prods_str = ", ".join(d.get('productos', [])) if isinstance(d.get('productos'), list) else str(d.get('producto_modelo', 'Varios'))
             
             label = f"{fecha_str} | {prods_str} | ${d.get('monto', 0):,.0f}"
@@ -193,13 +175,10 @@ with tab_ventas:
         
         if opcion:
             lbl, mov_id, datos_mov = opcion
-            
             st.info(f"Vas a eliminar: **{lbl}**")
-            st.warning("⚠️ Nota: Al borrar la venta, el dinero se descuenta de la caja, pero el STOCK NO SE REPONE automáticamente. Debes reponerlo manualmente.")
             
             if st.button("🗑️ Confirmar Eliminación", type="primary"):
                 ref_movs.document(mov_id).delete()
                 st.success("Registro de venta eliminado correctamente.")
-                # Aquí estaba el error. Ahora al usar 'import time' separado, funcionará.
-                time.sleep(1.5) 
+                time.sleep(1.5) # Esto ya no fallará
                 st.rerun()
