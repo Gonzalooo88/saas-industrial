@@ -62,11 +62,20 @@ try:
     for doc in docs:
         d = doc.to_dict()
         if d.get('fecha'):
+            # Convertimos Timestamp a datetime python
             d['fecha_dt'] = d['fecha'].replace(tzinfo=None)
             data.append(d)
 
     hoy = datetime.now()
     mes_actual_str = hoy.strftime('%Y-%m')
+
+    # --- TRADUCCIÓN MANUAL DE MESES (SOLUCIÓN) ---
+    nombres_meses = {
+        1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril",
+        5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto",
+        9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
+    }
+    nombre_mes_actual = nombres_meses[hoy.month]
 
     if not data:
         st.info("👋 ¡Bienvenido! Aún no hay movimientos registrados.")
@@ -82,13 +91,14 @@ try:
         df_repo = df[(df['mes_anio'] == mes_actual_str) & (df['tipo'] == 'Reposición')]
 
         # --- KPI: RESUMEN FINANCIERO DEL MES ---
-        st.subheader(f"🏆 Resumen de {hoy.strftime('%B')}")
+        # Aquí usamos la variable traducida
+        st.subheader(f"🏆 Resumen de {nombre_mes_actual}")
         
         # Cálculos Generales
         total_facturado = df_ventas['monto'].sum()
-        total_reinvertido = df_repo['monto'].abs().sum() # Usamos abs() porque reposición se guarda negativo
+        total_reinvertido = df_repo['monto'].abs().sum() 
         
-        # Mostramos las 2 métricas principales arriba
+        # Métricas
         kpi1, kpi2 = st.columns(2)
         
         kpi1.metric(
@@ -101,7 +111,7 @@ try:
             label="🔄 Total Reinvertido (Stock)",
             value=f"${total_reinvertido:,.0f}",
             delta=f"{len(df_repo)} reposiciones",
-            delta_color="off" # Color gris neutro para diferenciar de ganancia
+            delta_color="off" 
         )
         
         st.markdown("---")
