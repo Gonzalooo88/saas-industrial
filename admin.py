@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
-import time  # ESTE ES EL MODULO PARA SLEEP
-from datetime import datetime, time as dt_time # ESTE ES EL RELOJ (ALIAS)
+import time # ✅ ESTE es el módulo que tiene .sleep()
+import datetime # ✅ Usamos esto para manejar fechas sin conflictos
 import os
 import sys
 
@@ -71,7 +71,6 @@ with tab_retro:
         pid_seleccionado = st.selectbox("1. Selecciona el Modelo", options=list(opciones_productos.keys()), format_func=lambda x: opciones_productos[x])
         
         # Selección de la Variante (Talle/Color)
-        variant_str = "N/A"
         variante_seleccionada_idx = -1
         
         if pid_seleccionado:
@@ -111,8 +110,10 @@ with tab_retro:
                     batch.update(ref_p, {"variantes": vars_actuales})
                     
                     # 2. Crear movimiento con fecha vieja
-                    # AQUÍ USAMOS dt_time (el alias) PARA EVITAR EL ERROR
-                    fecha_completa = datetime.combine(fecha_elegida, dt_time(12, 0, 0))
+                    # --- FIX DE FECHAS: Usamos datetime.time explícitamente ---
+                    hora_fija = datetime.time(12, 0, 0) # Hora mediodía
+                    fecha_completa = datetime.datetime.combine(fecha_elegida, hora_fija)
+                    
                     desc_prod = f"{p_info['modelo']} ({var_elegida['talle']} {var_elegida['color']})"
                     
                     batch.add(db.collection(COLECCION_MOVIMIENTOS), {
@@ -126,7 +127,7 @@ with tab_retro:
                     
                     batch.commit()
                     st.success(f"✅ Venta guardada del día {fecha_elegida}")
-                    time.sleep(1) # AQUÍ USAMOS time (el módulo)
+                    time.sleep(1) # Ahora usa el módulo 'time' correctamente
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error al guardar: {e}")
@@ -172,7 +173,13 @@ with tab_ventas:
         d = doc.to_dict()
         # Filtramos visualmente solo Ventas o Reposiciones
         if d.get('tipo') in ['Venta', 'Venta Retroactiva']:
-            fecha_str = d['fecha'].strftime('%d/%m %H:%M') if d.get('fecha') else "S/F"
+            # Manejo seguro de fechas para visualización
+            fecha_dt = d.get('fecha')
+            fecha_str = "S/F"
+            if fecha_dt:
+                # Convertir timestamp de Firebase a datetime si es necesario
+                fecha_str = fecha_dt.strftime('%d/%m %H:%M')
+            
             # Manejo de lista de productos para el label
             prods_str = ", ".join(d.get('productos', [])) if isinstance(d.get('productos'), list) else str(d.get('producto_modelo', 'Varios'))
             
@@ -193,5 +200,6 @@ with tab_ventas:
             if st.button("🗑️ Confirmar Eliminación", type="primary"):
                 ref_movs.document(mov_id).delete()
                 st.success("Registro de venta eliminado correctamente.")
-                time.sleep(1.5) # Ahora sí funciona
+                # Aquí estaba el error. Ahora al usar 'import time' separado, funcionará.
+                time.sleep(1.5) 
                 st.rerun()
