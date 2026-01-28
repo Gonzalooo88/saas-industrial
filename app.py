@@ -1,5 +1,5 @@
 import streamlit as st
-import time as tm # Usamos tm para evitar errores
+import time as tm
 import os
 import sys
 
@@ -24,11 +24,23 @@ if 'carpeta_cliente' not in st.session_state:
     st.session_state.carpeta_cliente = ""
 
 # ==============================================================================
+# LÓGICA DE PARAMETROS URL (LINK DE INVITACIÓN)
+# ==============================================================================
+# Detectamos si viene ?empresa=algo en el link
+query_params = st.query_params
+empresa_param = query_params.get("empresa", None)
+
+# ==============================================================================
 # FUNCIÓN DE LOGIN
 # ==============================================================================
 def login():
     st.title("🔐 Iniciar Sesión")
-    st.markdown("Bienvenido al Sistema de Gestión.")
+    
+    # Si viene con link de invitación, mostramos un mensaje personalizado
+    if empresa_param:
+        st.info(f"🏢 Ingresando al portal de: **{empresa_param.upper().replace('_', ' ')}**")
+    else:
+        st.markdown("Bienvenido al Sistema de Gestión.")
     
     with st.form("login_form"):
         user_input = st.text_input("Usuario")
@@ -50,15 +62,21 @@ def login():
                     st.error("Usuario o contraseña incorrectos.")
                 else:
                     user_data = results[0].to_dict()
+                    carpeta_usuario = user_data.get('carpeta_instancia')
                     
+                    # --- VALIDACIÓN DE LINK DE INVITACIÓN ---
+                    # Si el usuario usó un link de invitación, verificamos que pertenezca a esa empresa
+                    if empresa_param and carpeta_usuario != empresa_param:
+                        st.error(f"⛔ Error de seguridad: Tu usuario pertenece a '{carpeta_usuario}', no puedes ingresar mediante el enlace de '{empresa_param}'.")
+                        return
+
                     # 2. VERIFICAMOS SI EL USUARIO ESTÁ ACTIVO
                     if not user_data.get('activo', True):
                         st.error("⛔ Tu usuario ha sido deshabilitado por el administrador.")
                         return
 
                     # 3. VERIFICAMOS SI LA EMPRESA ESTÁ ACTIVA
-                    carpeta = user_data.get('carpeta_instancia')
-                    instancia_doc = db.collection('instancias').document(carpeta).get()
+                    instancia_doc = db.collection('instancias').document(carpeta_usuario).get()
                     
                     if instancia_doc.exists:
                         instancia_data = instancia_doc.to_dict()
@@ -66,17 +84,16 @@ def login():
                             st.error("🏢 La empresa a la que perteneces está suspendida temporalmente.")
                             return
                     else:
-                        # Si no existe la carpeta en 'instancias', es un error crítico de datos
-                        st.warning(f"⚠️ Error de sistema: No encuentro la carpeta '{carpeta}'. Contacta soporte.")
+                        st.warning(f"⚠️ Error crítico: No encuentro la carpeta '{carpeta_usuario}'.")
                         return
 
-                    # 4. ÉXITO: GUARDAMOS DATOS EN SESIÓN
+                    # 4. ÉXITO
                     st.session_state.logueado = True
                     st.session_state.usuario = user_data['usuario']
                     st.session_state.rol = user_data['rol']
-                    st.session_state.carpeta_cliente = carpeta 
+                    st.session_state.carpeta_cliente = carpeta_usuario
                     
-                    st.success(f"Bienvenido {user_data['usuario']} ({carpeta})")
+                    st.success(f"Bienvenido {user_data['usuario']} ({carpeta_usuario})")
                     tm.sleep(1)
                     st.rerun()
                     
@@ -109,13 +126,14 @@ else:
             logout()
 
     # --- RUTEO DE PÁGINAS ---
-    # Aquí cargamos el archivo de Inicio primero y corregimos el ícono de Caja
+    # NOTA: Asegúrate de que los archivos existan en la carpeta con ESTOS nombres exactos.
+    # Si tu archivo de caja se llama '3_movimientos.py', cambia la línea de abajo.
     
     pg = st.navigation([
         st.Page("instancias_clientes/facha_shila/0_inicio.py", title="Inicio", icon="🏠"),
         st.Page("instancias_clientes/facha_shila/1_ventas.py", title="Ventas", icon="🛒"),
         st.Page("instancias_clientes/facha_shila/2_stock.py", title="Stock", icon="📦"),
-        st.Page("instancias_clientes/facha_shila/3_movimientos.py", title="movimientos", icon="💵"), # Icono corregido
+        st.Page("instancias_clientes/facha_shila/3_movimientos.py", title="movimientos", icon="💵"), 
         st.Page("instancias_clientes/facha_shila/4_admin.py", title="Admin Local", icon="⚙️"),
     ])
     
@@ -123,4 +141,4 @@ else:
         pg.run()
     except Exception as e:
         st.error(f"Error cargando la página: {e}")
-        st.info("💡 Posible causa: Verifica que todos los archivos (0_inicio, 1_ventas, etc.) existan en la carpeta.")
+        st.info("💡 Consejo: Revisa que el archivo '3_movimientos.py' o '3_movimientos.py' exista y coincida con el nombre en app.py")
