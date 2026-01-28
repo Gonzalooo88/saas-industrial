@@ -1,118 +1,201 @@
 import streamlit as st
+import pandas as pd
 import time as tm
 import datetime
 import os
-# Ya no importamos shutil porque no copiaremos nada
+import sys
 
-# --- CONEXIÓN ---
+# --- CONEXIÓN BASE DE DATOS ---
 try:
     from config import db
 except ImportError:
-    st.error("❌ Falta config.py")
+    st.error("❌ No encuentro el archivo config.py en esta carpeta.")
     st.stop()
 
+# --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Super Admin SaaS", page_icon="🛠️", layout="wide")
-URL_BASE = "https://tu-app.streamlit.app" 
 
-st.title("🛠️ Super Admin (Modo Custom)")
-st.caption("Cada cliente inicia con una carpeta vacía para desarrollo a medida.")
+# URL FIJA DE TU APP
+URL_APP = "https://saas-industrial-vbqr4pex367axdvgtuxiyw.streamlit.app"
+
+st.title("🛠️ Panel de Control (Modo Custom)")
+st.caption(f"🔗 Dominio configurado: `{URL_APP}`")
 st.markdown("---")
 
+# ==============================================================================
+# TABS
+# ==============================================================================
 tab_gestion, tab_crear_cliente, tab_crear_usuario = st.tabs([
-    "🎛️ Gestionar Clientes", 
-    "🏭 Crear Nueva Empresa", 
+    "🎛️ Clientes y Usuarios", 
+    "🏭 Nueva Empresa", 
     "👤 Nuevo Empleado"
 ])
 
 # ------------------------------------------------------------------------------
-# TAB 1: GESTIÓN
+# TAB 1: GESTIÓN COMPLETA
 # ------------------------------------------------------------------------------
 with tab_gestion:
-    st.subheader("Estado de Clientes")
-    docs = db.collection('instancias').stream()
+    st.subheader("Directorio de Empresas")
     
+    ref_instancias = db.collection('instancias')
+    docs = ref_instancias.stream()
+    
+    lista_clientes = []
     for doc in docs:
         d = doc.to_dict()
-        cid = doc.id
+        d['id'] = doc.id
+        lista_clientes.append(d)
         
-        with st.container(border=True):
-            c1, c2 = st.columns([3, 1])
-            with c1:
-                st.markdown(f"### 🏢 {d.get('nombre')} (`{cid}`)")
-                st.caption(f"Link: {URL_BASE}/?empresa={cid}")
+    if not lista_clientes:
+        st.info("No hay empresas registradas.")
+    else:
+        for cli in lista_clientes:
+            # --- TARJETA DE EMPRESA ---
+            with st.container(border=True):
+                c1, c2 = st.columns([3, 1])
                 
-                # Checkeo físico rápido
-                ruta = f"instancias_clientes/{cid}"
-                if os.path.exists(ruta):
-                    archs = [f for f in os.listdir(ruta) if f.endswith('.py')]
-                    st.caption(f"📂 Módulos detectados: {len(archs)} archivos")
-                else:
-                    st.error("⚠️ La carpeta física NO existe.")
+                with c1:
+                    st.markdown(f"### 🏢 {cli.get('nombre', 'Sin Nombre')} (`{cli['id']}`)")
+                    
+                    # --- CHECK FÍSICO (NUEVO) ---
+                    # Verificamos si la carpeta existe realmente para evitar errores
+                    ruta_fisica = f"instancias_clientes/{cli['id']}"
+                    if os.path.isdir(ruta_fisica):
+                        archivos = [f for f in os.listdir(ruta_fisica) if f.endswith('.py')]
+                        st.caption(f"✅ Carpeta física OK | Módulos detectados: {len(archivos)}")
+                    else:
+                        st.error(f"⚠️ ALERTA: La carpeta física '{ruta_fisica}' NO EXISTE. Crea la carpeta manualmente.")
 
-            with c2:
-                act = d.get('activo', True)
-                if st.toggle("Activo", value=act, key=f"tg_{cid}") != act:
-                    db.collection('instancias').document(cid).update({"activo": not act})
-                    st.rerun()
+                    # Link de invitación
+                    link = f"{URL_APP}/?empresa={cli['id']}"
+                    st.text_input(f"Link {cli['nombre']}", value=link, disabled=True, key=f"lnk_{cli['id']}")
+
+                with c2:
+                    st.write("**Estado**")
+                    act = cli.get('activo', True)
+                    if st.toggle("Activo", value=act, key=f"tg_cli_{cli['id']}") != act:
+                        ref_instancias.document(cli['id']).update({"activo": not act})
+                        st.rerun()
+                
+                # --- GESTIÓN DE USUARIOS ---
+                with st.expander(f"👥 Gestionar Usuarios de {cli['nombre']}"):
+                    users_ref = db.collection('saas_usuarios_global')
+                    query = users_ref.where('carpeta_instancia', '==', cli['id']).stream()
+                    
+                    users = []
+                    for u in query:
+                        ud = u.to_dict()
+                        ud['uid'] = u.id
+                        users.append(ud)
+                    
+                    if not users:
+                        st.warning("Sin usuarios.")
+                    else:
+                        for u in users:
+                            uc1, uc2, uc3 = st.columns([2, 1, 1])
+                            uc1.write(f"👤 **{u['usuario']}** ({u.get('rol')})")
+                            uc1.caption(f"Pass: {u.get('password')}")
+                            
+                            with uc2:
+                                u_act = u.get('activo', True)
+                                if st.checkbox("Habilitado", value=u_act, key=f"u_act_{u['uid']}") != u_act:
+                                    users_ref.document(u['uid']).update({"activo": not u_act})
+                                    st.toast("Estado actualizado")
+                                    tm.sleep(0.5)
+                                    st.rerun()
+                            
+                            with uc3:
+                                if st.button("🗑️", key=f"del_{u['uid']}"):
+                                    users_ref.document(u['uid']).delete()
+                                    st.toast("Usuario eliminado")
+                                    tm.sleep(0.5)
+                                    st.rerun()
+                            st.divider()
 
 # ------------------------------------------------------------------------------
-# TAB 2: CREAR NUEVA EMPRESA (VACÍA)
+# TAB 2: CREAR NUEVA EMPRESA (CON CREACIÓN DE CARPETA)
 # ------------------------------------------------------------------------------
 with tab_crear_cliente:
-    st.subheader("🚀 Alta de Nuevo Cliente")
-    st.info("Esto creará la carpeta vacía y el usuario admin.")
+    st.subheader("Alta de Empresa")
+    st.info("ℹ️ Esto creará el registro en Base de Datos y la **Carpeta Vacía** en el servidor.")
     
-    with st.form("form_new"):
-        col_a, col_b = st.columns(2)
-        nombre = col_a.text_input("Nombre Negocio")
-        id_carp = col_b.text_input("ID Carpeta (ej: nike)")
+    with st.form("new_corp"):
+        c1, c2 = st.columns(2)
+        nombre = c1.text_input("Nombre Fantasía")
+        id_carp = c2.text_input("ID Carpeta (único, sin espacios, ej: nike)")
         
-        st.markdown("#### Admin Inicial")
-        col_c, col_d = st.columns(2)
-        u_adm = col_c.text_input("Usuario")
-        p_adm = col_d.text_input("Pass")
+        st.markdown("**Usuario Admin Inicial**")
+        c3, c4 = st.columns(2)
+        u_adm = c3.text_input("Usuario")
+        p_adm = c4.text_input("Contraseña")
         
-        if st.form_submit_button("Crear"):
-            if id_carp and u_adm:
-                # 1. Validar si existe en DB
-                if db.collection('instancias').document(id_carp).get().exists:
-                    st.error("ID ya existe en DB.")
+        if st.form_submit_button("Crear Infraestructura"):
+            if id_carp and u_adm and p_adm:
+                # 1. Validar DB
+                check = ref_instancias.document(id_carp).get()
+                if check.exists:
+                    st.error("⚠️ El ID ya existe en la Base de Datos.")
                     st.stop()
                 
-                # 2. Validar carpeta física
+                # 2. Validar Carpeta Física
                 ruta_final = f"instancias_clientes/{id_carp}"
                 if os.path.exists(ruta_final):
-                    st.error("Carpeta ya existe en servidor.")
+                    st.error(f"⚠️ La carpeta '{ruta_final}' ya existe en el servidor.")
                     st.stop()
-                
-                # 3. CREAR CARPETA VACÍA
+
                 try:
+                    # 3. CREAR CARPETA FÍSICA
                     os.makedirs(ruta_final)
-                    # Creamos un archivo dummy para que github/sistema no la ignore
+                    # Creamos un archivo oculto para que git/sistema reconozca la carpeta
                     with open(f"{ruta_final}/__init__.py", "w") as f:
                         f.write("# Carpeta de cliente")
-                    
-                    # 4. CREAR EN DB
-                    db.collection('instancias').document(id_carp).set({
+
+                    # 4. CREAR EN DB (Empresa)
+                    ref_instancias.document(id_carp).set({
                         "nombre": nombre, "creado_el": datetime.datetime.now(), "activo": True
                     })
+                    
+                    # 5. CREAR EN DB (Usuario Admin)
                     db.collection('saas_usuarios_global').add({
                         "usuario": u_adm, "password": p_adm, "rol": "admin",
                         "carpeta_instancia": id_carp, "activo": True, "fecha_alta": datetime.datetime.now()
                     })
                     
-                    st.success(f"✅ Cliente creado. Carpeta `{ruta_final}` lista para recibir código.")
+                    st.success(f"✅ ¡Listo! Carpeta `{ruta_final}` creada vacía. Ahora sube los archivos .py ahí.")
                     tm.sleep(2)
                     st.rerun()
-                    
+
                 except Exception as e:
-                    st.error(f"Error creando carpeta: {e}")
+                    st.error(f"Error creando carpeta o datos: {e}")
+
             else:
-                st.warning("Faltan datos.")
+                st.warning("Completa todos los campos.")
 
 # ------------------------------------------------------------------------------
-# TAB 3: CREAR USUARIO (Igual que antes)
+# TAB 3: AGREGAR EMPLEADO
 # ------------------------------------------------------------------------------
 with tab_crear_usuario:
-    st.write("Agrega empleados a empresas existentes (código igual al anterior).")
-    # ... (Usa el mismo código de creación de usuario de siempre)
+    st.subheader("Alta de Empleado")
+    opts = [c['id'] for c in lista_clientes]
+    if not opts:
+        st.warning("No hay empresas.")
+    else:
+        with st.form("new_emp"):
+            empresa = st.selectbox("Empresa", opts)
+            c1, c2, c3 = st.columns(3)
+            usr = c1.text_input("Usuario")
+            pwd = c2.text_input("Pass")
+            rol = c3.selectbox("Rol", ["vendedor", "empleado", "admin"])
+            
+            if st.form_submit_button("Crear Usuario"):
+                check = db.collection('saas_usuarios_global').where("usuario", "==", usr).stream()
+                if len(list(check)) > 0:
+                    st.error("Usuario ya existe.")
+                else:
+                    db.collection('saas_usuarios_global').add({
+                        "usuario": usr, "password": pwd, "rol": rol,
+                        "carpeta_instancia": empresa, "activo": True, "fecha_alta": datetime.datetime.now()
+                    })
+                    st.success("Usuario creado.")
+                    tm.sleep(1)
+                    st.rerun()
