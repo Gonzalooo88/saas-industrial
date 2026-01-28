@@ -6,7 +6,7 @@ from config import db
 st.header("⚙️ Administración y Ajustes")
 st.warning("⚠️ Esta sección modifica directamente la base de datos. Úsala con precaución.")
 
-# Clave simple para evitar dedos rápidos (Opcional, pero pediste que no sea fácil)
+# Interruptor de seguridad
 bloqueo = st.toggle("Habilitar Edición Avanzada")
 
 if not bloqueo:
@@ -14,17 +14,14 @@ if not bloqueo:
     st.stop()
 
 # --- SI PASA EL BLOQUEO ---
-
-tab_retro, tab_producto = st.tabs(["📅 Cargar Venta Pasada", "🗑️ Eliminar Producto"])
+tab_retro, tab_producto, tab_ventas = st.tabs(["📅 Cargar Venta Pasada", "📦 Eliminar Producto", "🗑️ Eliminar Venta"])
 
 # ---------------------------------------------------------
-# SECCIÓN 1: CARGA RETROACTIVA (Para cuando se olvidaron de cargar ayer)
+# TAB 1: CARGA RETROACTIVA
 # ---------------------------------------------------------
 with tab_retro:
     st.subheader("Cargar venta de una fecha anterior")
-    st.caption("Esto descontará stock actual pero registrará la venta en la fecha que elijas.")
     
-    # 1. Traer productos
     ref_stock = db.collection('facha_shila_productos')
     docs = ref_stock.stream()
     productos_dict = {doc.id: doc.to_dict() for doc in docs}
@@ -37,8 +34,6 @@ with tab_retro:
 
     with st.form("form_retroactivo"):
         col_fecha, col_vend = st.columns(2)
-        
-        # Selector de Fecha Pasada
         fecha_elegida = col_fecha.date_input("Fecha de la venta", value="today")
         vendedor = col_vend.selectbox("¿Quién vendió?", ["Bianca", "Luciano", "Empleado"])
         
@@ -46,47 +41,39 @@ with tab_retro:
         seleccion = c1.selectbox("Producto", list(opciones.keys()))
         cantidad = c2.number_input("Cantidad", min_value=1, value=1)
         
-        submit_retro = st.form_submit_button("💾 Guardar Venta Pasada")
-        
-        if submit_retro and seleccion:
-            pid = opciones[seleccion]
-            prod = productos_dict[pid]
-            
-            # Validar Stock
-            if cantidad > prod['stock_actual']:
-                st.error(f"No puedes cargar esto. Solo tienes {prod['stock_actual']} en stock hoy.")
-            else:
-                # Construir fecha con hora fija (ej: mediodía) para que no falle el gráfico
-                fecha_completa = datetime.combine(fecha_elegida, time(12, 0, 0))
+        if st.form_submit_button("💾 Guardar Venta Pasada"):
+            if seleccion:
+                pid = opciones[seleccion]
+                prod = productos_dict[pid]
                 
-                total = prod['precio_venta'] * cantidad
-                
-                # 1. Guardar Movimiento con fecha vieja
-                db.collection('facha_shila_movimientos').add({
-                    "fecha": fecha_completa,
-                    "tipo": "Venta",
-                    "producto_modelo": prod['modelo'], # Guardamos el nombre por si se borra el producto despues
-                    "cantidad": cantidad,
-                    "monto_total": total,
-                    "vendedor": vendedor,
-                    "nota": "Carga manual retroactiva"
-                })
-                
-                # 2. Descontar Stock Actual
-                nuevo_stock = prod['stock_actual'] - cantidad
-                ref_stock.document(pid).update({"stock_actual": nuevo_stock})
-                
-                st.success(f"✅ Venta del día {fecha_elegida} registrada.")
+                if cantidad > prod['stock_actual']:
+                    st.error(f"Stock insuficiente. Hay {prod['stock_actual']}.")
+                else:
+                    fecha_completa = datetime.combine(fecha_elegida, time(12, 0, 0))
+                    total = prod['precio_venta'] * cantidad
+                    
+                    db.collection('facha_shila_movimientos').add({
+                        "fecha": fecha_completa,
+                        "tipo": "Venta",
+                        "producto_modelo": prod['modelo'],
+                        "cantidad": cantidad,
+                        "monto_total": total,
+                        "vendedor": vendedor,
+                        "nota": "Carga manual retroactiva"
+                    })
+                    
+                    nuevo_stock = prod['stock_actual'] - cantidad
+                    ref_stock.document(pid).update({"stock_actual": nuevo_stock})
+                    st.success(f"✅ Venta registrada con fecha {fecha_elegida}.")
+                    st.rerun()
 
 # ---------------------------------------------------------
-# SECCIÓN 2: ELIMINAR PRODUCTO (Catálogo)
+# TAB 2: ELIMINAR PRODUCTO
 # ---------------------------------------------------------
 with tab_producto:
     st.subheader("Borrar productos del catálogo")
-    st.error("¡Cuidado! Si borras un producto, desaparecerá del inventario y de la caja futura. El historial de ventas antiguas SE MANTIENE.")
+    st.error("Si borras un producto, desaparece del inventario.")
     
-    # Reutilizamos el diccionario de productos pero sin filtro de stock
-    # para poder borrar cosas con stock 0
     all_docs = ref_stock.stream()
     all_prods = {d.id: d.to_dict() for d in all_docs}
     
@@ -96,11 +83,70 @@ with tab_producto:
     
     if seleccion_borrar:
         id_a_borrar = lista_borrar[seleccion_borrar]
-        
-        # Botón de confirmación extra
-        st.write(f"Vas a eliminar: **{seleccion_borrar}**")
         if st.button("🔥 Confirmar Eliminación Definitiva", type="primary"):
-            # Borrar de Firestore
             ref_stock.document(id_a_borrar).delete()
-            st.success("Producto eliminado correctamente.")
+            st.success("Producto eliminado.")
             st.rerun()
+
+# ---------------------------------------------------------
+# TAB 3: ELIMINAR VENTAS (NUEVO)
+# ---------------------------------------------------------
+with tab_ventas:
+    st.subheader("Anular Ventas Registradas")
+    st.info("Aquí puedes borrar las ventas de prueba.")
+
+    # 1. Listar últimas ventas
+    ref_movs = db.collection('facha_shila_movimientos')
+    docs_movs = ref_movs.where("tipo", "==", "Venta").order_by("fecha", direction="DESCENDING").limit(20).stream()
+    
+    lista_movs = []
+    for doc in docs_movs:
+        d = doc.to_dict()
+        d['id'] = doc.id
+        # Formato legible para el selector
+        fecha_str = d['fecha'].strftime('%d/%m %H:%M') if d.get('fecha') else "S/F"
+        label = f"{fecha_str} | {d.get('producto_modelo')} | ${d.get('monto_total',0):,.0f} ({d.get('vendedor')})"
+        lista_movs.append((label, d))
+
+    if not lista_movs:
+        st.warning("No hay ventas recientes.")
+    else:
+        # Selector de venta
+        opcion_elegida = st.selectbox("Selecciona la venta a borrar", options=lista_movs, format_func=lambda x: x[0])
+        
+        if opcion_elegida:
+            label, datos_venta = opcion_elegida
+            id_venta = datos_venta['id']
+            cant_vendida = datos_venta.get('cantidad', 1)
+            modelo_vendido = datos_venta.get('producto_modelo')
+
+            st.write("---")
+            st.write(f"Vas a eliminar: **{label}**")
+            
+            # Checkbox importante
+            devolver_stock = st.checkbox("🔄 Devolver stock al inventario", value=True, help="Si marcas esto, sumaremos las unidades borradas de nuevo al stock.")
+
+            if st.button("🗑️ Eliminar Venta", type="primary"):
+                # A. Devolver Stock (Si se solicitó)
+                if devolver_stock and modelo_vendido:
+                    # Buscar el producto por modelo (puede haber varios talles, intentamos sumar al genérico o avisar)
+                    # Nota: Como en ventas guardamos el modelo pero no el ID exacto en versiones simples, 
+                    # intentaremos buscar coincidencias. Si es una prueba, a veces basta con borrar el registro.
+                    # Para hacerlo robusto buscamos por nombre exacto:
+                    
+                    q_stock = ref_stock.where("modelo", "==", modelo_vendido).limit(1).stream()
+                    found_prod = list(q_stock)
+                    
+                    if found_prod:
+                        doc_prod = found_prod[0]
+                        stock_nuevo = doc_prod.to_dict().get('stock_actual', 0) + cant_vendida
+                        ref_stock.document(doc_prod.id).update({"stock_actual": stock_nuevo})
+                        st.caption(f"✅ Se devolvieron {cant_vendida} unidades al stock de {modelo_vendido}.")
+                    else:
+                        st.warning(f"No se encontró el producto '{modelo_vendido}' en stock para devolverlo. Solo se borrará el registro de dinero.")
+
+                # B. Borrar el movimiento
+                ref_movs.document(id_venta).delete()
+                
+                st.success("Venta eliminada correctamente.")
+                st.rerun()
