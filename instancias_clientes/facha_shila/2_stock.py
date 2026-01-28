@@ -1,10 +1,11 @@
 import streamlit as st
 import os
 import sys
-import time as tm # Usamos alias seguro
+import time as tm
+import itertools # Vital para combinar talles x colores x materiales
 from datetime import datetime
 
-# --- CONEXIÓN CON CONFIG.PY ---
+# --- CONEXIÓN BASE DE DATOS ---
 ruta_raiz = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 if ruta_raiz not in sys.path:
     sys.path.append(ruta_raiz)
@@ -15,246 +16,340 @@ except Exception as e:
     st.error(f"Error de conexión: {e}")
     st.stop()
 
-# --- SEGURIDAD Y CONTEXTO ---
+# --- SEGURIDAD ---
 if 'carpeta_cliente' not in st.session_state:
-    st.error("🚫 Acceso denegado. Inicia sesión.")
+    st.error("🚫 Acceso denegado. Por favor inicia sesión.")
     st.stop()
 
-cliente_id = st.session_state.carpeta_cliente # Ej: "facha_shila"
+cliente_id = st.session_state.carpeta_cliente
 
-# --- REFERENCIAS A NUEVAS COLECCIONES ANIDADAS ---
+# Referencias a la nueva estructura anidada
 ref_productos = db.collection('instancias').document(cliente_id).collection('productos')
 ref_movimientos = db.collection('instancias').document(cliente_id).collection('movimientos')
 
-st.header(f"📦 Gestión de Stock: {cliente_id.replace('_', ' ').title()}")
+st.set_page_config(page_title="Gestión de Stock", layout="wide", page_icon="📦")
 
-# Estilos CSS para las tarjetas matriciales
+# --- LÓGICA DE NEGOCIO (Esquemas Dinámicos) ---
+# Aquí definimos qué pide cada categoría
+CATEGORIAS = {
+    "Ropa": ["Talle", "Color"],
+    "Anillo": ["Material", "Talle", "Color"],
+    "Collar": ["Material", "Largo", "Color"],
+    "Pulsera": ["Material", "Color"],
+    "Aros": ["Material", "Color"],
+    "Labial": ["Tono"],
+    "Accesorio Pelo": ["Color"],
+    "Mascarilla": [], # Producto único sin variantes
+    "Set/Conjunto": ["Talle"],
+    "Otro": ["Detalle"]
+}
+
+# --- CSS MEJORADO ---
 st.markdown("""
     <style>
-    .model-card { border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-bottom: 15px; background: white; }
-    .model-title { font-size: 1.2em; font-weight: bold; color: #1f77b4; }
-    .variant-group { margin-left: 15px; margin-top: 5px; font-size: 0.95em; }
-    .variant-tag { background-color: #f0f2f6; padding: 2px 8px; border-radius: 4px; margin-right: 5px; border: 1px solid #ccc;}
-    .stock-ok { color: green; font-weight: bold; }
-    .stock-low { color: red; font-weight: bold; }
+    .stock-card { 
+        background-color: white; 
+        padding: 20px; 
+        border-radius: 10px; 
+        border: 1px solid #e0e0e0; 
+        margin-bottom: 15px; 
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .badge-cat { 
+        background-color: #e3f2fd; 
+        color: #1565c0; 
+        padding: 4px 8px; 
+        border-radius: 12px; 
+        font-size: 0.8rem; 
+        font-weight: bold; 
+        text-transform: uppercase;
+    }
+    .variant-row {
+        font-size: 0.95rem;
+        margin-top: 5px;
+        padding: 4px;
+        border-bottom: 1px dotted #eee;
+    }
+    .stock-high { color: #2e7d32; font-weight: bold; } /* Verde */
+    .stock-low { color: #c62828; font-weight: bold; } /* Rojo */
     </style>
 """, unsafe_allow_html=True)
 
-# --- PESTAÑAS ---
-tab_ver, tab_reponer, tab_nuevo = st.tabs(["👁️ Visualizar Stock", "🔄 Reposición / Ajuste Precios", "➕ Crear Nuevo Modelo"])
+# --- HELPER: Formatear variante para mostrar ---
+def formatear_variante_texto(var_dict):
+    parts = []
+    # Ignoramos claves internas
+    ignorar = ['stock', 'sku']
+    for k, v in var_dict.items():
+        if k not in ignorar:
+            parts.append(str(v))
+    return " - ".join(parts) if parts else "Único"
+
+# --- PESTAÑAS PRINCIPALES ---
+tab_ver, tab_reponer, tab_nuevo = st.tabs(["👁️ Visualizar Stock", "🔄 Reposición / Ajuste", "➕ Crear Nuevo Modelo"])
 
 # ==============================================================================
-# 1. PESTAÑA VISUALIZAR (TARJETAS DETALLADAS)
+# 1. VISUALIZAR STOCK
 # ==============================================================================
 with tab_ver:
-    st.caption("Vista detallada por Modelo > Talle > Color")
+    c1, c2 = st.columns([1, 2])
+    filtro_cat = c1.selectbox("Filtrar Categoría", ["Todas"] + list(CATEGORIAS.keys()))
+    busqueda = c2.text_input("Buscar por nombre o marca...", key="search_stock")
     
-    # Buscador
-    query = st.text_input("Buscar modelo...", key="search_view")
-    
-    # Usamos la nueva referencia
+    # Traemos productos
     docs = ref_productos.stream()
     encontrados = False
     
     for doc in docs:
         p = doc.to_dict()
-        # Filtro simple en memoria
-        if query and query.lower() not in p.get('modelo', '').lower():
-            continue
-            
+        p_id = doc.id
+        
+        # Filtros
+        if filtro_cat != "Todas" and p.get('categoria') != filtro_cat: continue
+        texto_full = f"{p.get('modelo','')} {p.get('marca','')}".lower()
+        if busqueda and busqueda.lower() not in texto_full: continue
+        
         encontrados = True
         variantes = p.get('variantes', [])
+        total_stock = sum(v.get('stock', 0) for v in variantes)
         
         with st.container():
-            st.markdown(f"""<div class="model-card">
-            <div class="model-title">{p.get('modelo','Sin Nombre')} <span style="font-size:0.8em; color:gray">({p.get('marca','')})</span></div>
-            <div style="margin-bottom:10px;">
-                <b>Venta:</b> ${p.get('precio_venta',0):,.2f} | 
-                <b>Ganancia unit.:</b> ${p.get('ganancia',0):,.2f}
-            </div>
+            st.markdown(f"""
+            <div class="stock-card">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div>
+                        <span class="badge-cat">{p.get('categoria', 'Gral')}</span>
+                        <h3 style="margin: 5px 0; color:#333;">{p.get('modelo')}</h3>
+                        <span style="color:gray">Marca: {p.get('marca', 'Genérica')}</span>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-size:1.2rem; font-weight:bold;">${p.get('precio_venta', 0):,.0f}</div>
+                        <div style="font-size:0.8rem; color:gray;">Costo: ${p.get('costo', 0):,.0f}</div>
+                        <div style="font-size:0.8rem; color:green;">Stock Total: {total_stock}</div>
+                    </div>
+                </div>
+                <hr style="margin:10px 0;">
             """, unsafe_allow_html=True)
             
             if not variantes:
-                st.warning("Este producto no tiene variantes cargadas.")
+                st.warning("⚠️ Producto sin variantes cargadas.")
             else:
-                # Agrupación por Talle
-                talles_unicos = sorted(list(set(v['talle'] for v in variantes)))
-                
-                for t in talles_unicos:
-                    vars_talle = [v for v in variantes if v['talle'] == t]
+                # Mostramos variantes en columnas para ahorrar espacio
+                cols_vars = st.columns(3) # 3 columnas de variantes
+                for i, v in enumerate(variantes):
+                    col_idx = i % 3
+                    desc = formatear_variante_texto(v)
+                    qty = v.get('stock', 0)
+                    clase_stock = "stock-high" if qty > 2 else "stock-low"
                     
-                    detalles_txt = ""
-                    for v in vars_talle:
-                        qty = v['stock']
-                        color_style = "stock-low" if qty <= 2 else "stock-ok"
-                        detalles_txt += f"({v['color']}) <span class='{color_style}'>{qty}</span> &nbsp; "
-                    
-                    st.markdown(f"""
-                    <div class="variant-group">
-                        <span class="variant-tag"><b>{t}</b></span> {detalles_txt}
-                    </div>
-                    """, unsafe_allow_html=True)
+                    cols_vars[col_idx].markdown(
+                        f"<div class='variant-row'>{desc}: <span class='{clase_stock}'>{qty} u.</span></div>", 
+                        unsafe_allow_html=True
+                    )
             
             st.markdown("</div>", unsafe_allow_html=True)
 
     if not encontrados:
-        st.info("No hay productos que coincidan o el inventario está vacío.")
+        st.info("No se encontraron productos con los filtros actuales.")
 
 # ==============================================================================
-# 2. PESTAÑA REPOSICIÓN Y PRECIOS
+# 2. REPOSICIÓN Y AJUSTE DE PRECIOS
 # ==============================================================================
 with tab_reponer:
-    st.subheader("🔄 Reposición de Mercadería")
+    st.header("🔄 Reposición de Mercadería")
+    st.caption("Selecciona un producto para agregar stock o cambiar sus precios.")
     
-    # 1. Seleccionar Producto
-    all_products = list(ref_productos.stream())
+    # Selector de producto
+    all_prods = list(ref_productos.stream())
+    opciones_prod = {d.id: f"{d.to_dict().get('modelo')} ({d.to_dict().get('categoria')})" for d in all_prods}
     
-    if not all_products:
-        st.warning("No hay productos cargados.")
-    else:
-        opciones = {doc.id: f"{doc.to_dict().get('modelo','???')}" for doc in all_products}
-        sel_id = st.selectbox("Seleccionar Modelo:", options=list(opciones.keys()), format_func=lambda x: opciones[x])
+    sel_id = st.selectbox("Buscar Producto a Reponer", options=list(opciones_prod.keys()), format_func=lambda x: opciones_prod[x])
+    
+    if sel_id:
+        ref_doc = ref_productos.document(sel_id)
+        data = ref_doc.get().to_dict()
+        categoria_actual = data.get('categoria', 'Otro')
+        campos_categoria = CATEGORIAS.get(categoria_actual, ["Detalle"])
         
-        if sel_id:
-            # Cargamos datos
-            ref_p = ref_productos.document(sel_id)
-            data_p = ref_p.get().to_dict()
-            current_vars = data_p.get('variantes', [])
+        st.divider()
+        
+        # --- A. EDICIÓN DE PRECIOS ---
+        c_p1, c_p2, c_p3 = st.columns(3)
+        n_costo = c_p1.number_input("Costo Unitario ($)", value=float(data.get('costo', 0)))
+        n_precio = c_p2.number_input("Precio Venta ($)", value=float(data.get('precio_venta', 0)))
+        n_ganancia = n_precio - n_costo
+        c_p3.metric("Nueva Ganancia", f"${n_ganancia:,.0f}")
+        
+        st.divider()
+        
+        # --- B. INGRESO DE STOCK ---
+        st.subheader("📦 Ingresar Unidades")
+        st.info(f"Campos requeridos para {categoria_actual}: {', '.join(campos_categoria)}")
+        
+        cols_input = st.columns(len(campos_categoria) + 1)
+        inputs_repo = {}
+        
+        # Generamos inputs dinámicos según la categoría
+        for i, campo in enumerate(campos_categoria):
+            # Intentamos autocompletar con el valor más común si existe
+            inputs_repo[campo] = cols_input[i].text_input(f"{campo}", key=f"repo_{campo}")
             
-            st.divider()
-            
-            # 2. Precios
-            col_pre1, col_pre2, col_pre3 = st.columns(3)
-            new_costo = col_pre1.number_input("Costo Reposición ($)", value=float(data_p.get('costo', 0)), step=50.0)
-            new_precio = col_pre2.number_input("Precio Venta ($)", value=float(data_p.get('precio_venta', 0)), step=50.0)
-            
-            new_ganancia = new_precio - new_costo
-            col_pre3.metric("Nueva Ganancia", f"${new_ganancia:,.2f}", delta=f"{new_ganancia - data_p.get('ganancia', 0):.2f}")
-            
-            st.divider()
-            
-            # 3. Variante a Reponer
-            st.write("📦 **Entrada de Stock**")
-            c_var1, c_var2, c_var3 = st.columns(3)
-            
-            # Auto-completar con lo que hay
-            existentes_talles = sorted(list(set(v['talle'] for v in current_vars)))
-            existentes_colores = sorted(list(set(v['color'] for v in current_vars)))
-            
-            talle_rep = c_var1.text_input("Talle", value=existentes_talles[0] if existentes_talles else "")
-            color_rep = c_var2.text_input("Color", value=existentes_colores[0] if existentes_colores else "")
-            cantidad_rep = c_var3.number_input("Cantidad", min_value=1, step=1)
-            
-            if st.button("💾 CONFIRMAR REPOSICIÓN", type="primary"):
+        cant_repo = cols_input[-1].number_input("Cantidad (+)", min_value=1, value=1)
+        
+        if st.button("💾 CONFIRMAR REPOSICIÓN", type="primary"):
+            # 1. Validar inputs
+            missing = [k for k, v in inputs_repo.items() if not v]
+            if missing and categoria_actual != "Mascarilla": # Mascarilla no tiene campos
+                st.error(f"Falta completar: {', '.join(missing)}")
+            else:
                 batch = db.batch()
                 
-                # A. Actualizar Precios
-                update_data = {
-                    "costo": new_costo,
-                    "precio_venta": new_precio,
-                    "ganancia": new_ganancia
-                }
+                # Actualizar precios
+                batch.update(ref_doc, {
+                    "costo": n_costo,
+                    "precio_venta": n_precio,
+                    "ganancia": n_ganancia
+                })
                 
-                # B. Actualizar Variantes
+                # Actualizar variantes (Buscar si existe o crear nueva)
+                vars_actuales = data.get('variantes', [])
                 found = False
-                new_variantes_list = []
+                desc_log = []
                 
-                for v in current_vars:
-                    # Normalizamos texto para comparar
-                    if v['talle'].lower() == talle_rep.lower() and v['color'].lower() == color_rep.lower():
-                        v['stock'] += cantidad_rep
+                # Normalizamos inputs para comparar
+                inputs_clean = {k: v.strip().title() for k, v in inputs_repo.items()}
+                
+                # Buscamos coincidencia
+                new_vars_list = []
+                for v in vars_actuales:
+                    # Comparamos solo las claves relevantes
+                    coincide = True
+                    for campo in campos_categoria:
+                        if str(v.get(campo.lower(), '')).lower() != inputs_clean[campo].lower():
+                            coincide = False
+                            break
+                    
+                    if coincide:
+                        v['stock'] += cant_repo
                         found = True
-                    new_variantes_list.append(v)
+                        desc_log.append(f"{formatear_variante_texto(v)} (stock actualizado)")
+                    
+                    new_vars_list.append(v)
                 
+                # Si no existía, la agregamos
                 if not found:
-                    new_variantes_list.append({
-                        "talle": talle_rep.upper(),
-                        "color": color_rep.title(),
-                        "stock": cantidad_rep
-                    })
+                    new_v = {k.lower(): v for k, v in inputs_clean.items()}
+                    new_v['stock'] = cant_repo
+                    new_vars_list.append(new_v)
+                    desc_log.append("Nueva variante creada")
+
+                batch.update(ref_doc, {"variantes": new_vars_list})
                 
-                update_data['variantes'] = new_variantes_list
-                batch.update(ref_p, update_data)
+                # Registrar Movimiento (Gasto)
+                gasto = n_costo * cant_repo
+                mid = f"REP-{int(tm.time())}"
                 
-                # C. Registrar Movimiento (Gasto/Inversión)
-                inversion_total = new_costo * cantidad_rep
-                # Usamos alias tm para time
-                mov_id = f"REP-{int(tm.time())}"
+                # Texto descripción para el log
+                desc_texto = f"{data['modelo']} - {', '.join(inputs_clean.values())} (+{cant_repo})"
                 
-                batch.set(ref_movimientos.document(mov_id), {
+                batch.set(ref_movimientos.document(mid), {
                     "tipo": "Reposición",
-                    "monto": -inversion_total,
-                    "costo_unitario": new_costo,
-                    "ganancia": 0,
-                    "productos": [f"{data_p.get('modelo')} {talle_rep}-{color_rep} (+{cantidad_rep})"],
+                    "monto": -gasto,
                     "fecha": datetime.now(),
+                    "productos": [desc_texto],
                     "vendedor": st.session_state.get('usuario', 'Sistema')
                 })
                 
                 batch.commit()
-                st.success(f"✅ Ingresados {cantidad_rep} unid. de {talle_rep}-{color_rep}.")
+                st.success("✅ Stock actualizado correctamente.")
                 tm.sleep(1.5)
                 st.rerun()
 
 # ==============================================================================
-# 3. PESTAÑA NUEVO MODELO
+# 3. CREAR NUEVO MODELO (LÓGICA MATRIZ COMPLETA)
 # ==============================================================================
 with tab_nuevo:
-    st.subheader("Crear Nuevo Modelo")
+    st.header("✨ Alta de Nuevo Producto")
+    st.markdown("Define las características y el sistema generará todas las combinaciones.")
     
-    col_main1, col_main2 = st.columns(2)
-    new_mod_nombre = col_main1.text_input("Nombre del Modelo", key="n_mod")
-    new_mod_marca = col_main2.text_input("Marca", key="n_mar")
+    # 1. Datos Básicos
+    c_base1, c_base2 = st.columns(2)
+    cat_sel = c_base1.selectbox("Tipo de Producto (Categoría)", list(CATEGORIAS.keys()))
+    marca = c_base2.text_input("Marca")
     
-    col_cost1, col_cost2, col_cost3 = st.columns(3)
-    n_costo = col_cost1.number_input("Costo ($)", min_value=0.0, key="n_cost")
-    n_precio = col_cost2.number_input("Precio Venta ($)", min_value=0.0, key="n_prec")
+    modelo = st.text_input("Nombre del Modelo (Ej: Argolla Cubana)")
     
-    n_ganancia = n_precio - n_costo
-    col_cost3.metric("Ganancia Estimada", f"${n_ganancia:,.2f}")
-
+    c_num1, c_num2, c_num3 = st.columns(3)
+    costo_ini = c_num1.number_input("Costo Unitario", 0.0)
+    precio_ini = c_num2.number_input("Precio Venta", 0.0)
+    c_num3.metric("Ganancia Estimada", f"${precio_ini - costo_ini:,.0f}")
+    
     st.divider()
     
-    st.write("📝 **Matriz Inicial**")
-    c_gen1, c_gen2 = st.columns(2)
-    talles_input = c_gen1.text_input("Talles (separados por coma)", placeholder="S, M, L")
-    colores_input = c_gen2.text_input("Colores (separados por coma)", placeholder="Negro, Rojo")
-    stock_init = st.number_input("Stock inicial p/u", min_value=0, value=1)
+    # 2. Generador de Variantes Dinámico
+    campos = CATEGORIAS[cat_sel]
+    inputs_generador = {}
     
-    if st.button("💾 CREAR MODELO"):
-        if new_mod_nombre and n_precio > 0:
-            lista_talles = [t.strip().upper() for t in talles_input.split(",") if t.strip()]
-            lista_colores = [c.strip().title() for c in colores_input.split(",") if c.strip()]
+    if not campos:
+        st.info(f"El producto '{cat_sel}' se creará como ítem único (sin variantes).")
+    else:
+        st.write(f"📝 **Configuración de Variantes para {cat_sel}**")
+        st.caption("Ingresa las opciones separadas por coma. Ej: Oro, Plata")
+        
+        cols_gen = st.columns(len(campos))
+        for i, campo in enumerate(campos):
+            val = cols_gen[i].text_input(f"{campo}(s)", placeholder="Ej: Rojo, Azul, Verde")
+            if val.strip():
+                # Convertimos "Rojo, Azul" en ["Rojo", "Azul"]
+                inputs_generador[campo] = [x.strip().title() for x in val.split(",") if x.strip()]
+    
+    stock_ini = st.number_input("Stock inicial para CADA variante", min_value=1, value=1)
+    
+    if st.button("🚀 CREAR PRODUCTO", type="primary"):
+        if not modelo or precio_ini <= 0:
+            st.error("Falta el Nombre del Modelo o el Precio.")
+        else:
+            variantes_finales = []
             
-            variantes_generadas = []
+            # CASO A: Producto Simple
+            if not campos:
+                variantes_finales.append({"nombre": "Único", "stock": stock_ini})
             
-            if not lista_talles or not lista_colores:
-                variantes_generadas.append({"talle": "Único", "color": "Único", "stock": stock_init})
+            # CASO B: Producto con Variantes (Matriz)
             else:
-                for t in lista_talles:
-                    for c in lista_colores:
-                        variantes_generadas.append({
-                            "talle": t,
-                            "color": c,
-                            "stock": stock_init
-                        })
+                # Validar que haya llenado todo
+                if len(inputs_generador) < len(campos):
+                    st.error(f"Debes completar todos los campos: {', '.join(campos)}")
+                    st.stop()
+                
+                # Producto Cartesiano (Magia)
+                keys = list(inputs_generador.keys()) # [Material, Largo]
+                values = list(inputs_generador.values()) # [[Oro, Plata], [40, 50]]
+                
+                combinaciones = list(itertools.product(*values)) # [(Oro, 40), (Oro, 50), (Plata, 40)...]
+                
+                for comb in combinaciones:
+                    v_dict = {}
+                    for i, k in enumerate(keys):
+                        v_dict[k.lower()] = comb[i]
+                    v_dict['stock'] = stock_ini
+                    variantes_finales.append(v_dict)
             
-            # Guardar en DB Nueva
-            p_id = f"PROD-{int(tm.time())}"
+            # Guardado en DB
+            new_id = f"PROD-{int(tm.time())}"
             payload = {
-                "modelo": new_mod_nombre,
-                "marca": new_mod_marca,
-                "costo": n_costo,
-                "precio_venta": n_precio,
-                "ganancia": n_ganancia,
-                "categoria": "General",
-                "variantes": variantes_generadas,
+                "modelo": modelo,
+                "marca": marca,
+                "categoria": cat_sel,
+                "costo": costo_ini,
+                "precio_venta": precio_ini,
+                "ganancia": precio_ini - costo_ini,
+                "variantes": variantes_finales,
                 "fecha_alta": datetime.now()
             }
-            ref_productos.document(p_id).set(payload)
             
-            st.success(f"✅ Modelo {new_mod_nombre} creado.")
-            tm.sleep(1)
+            ref_productos.document(new_id).set(payload)
+            
+            st.success(f"✅ Producto creado con {len(variantes_finales)} combinaciones.")
+            tm.sleep(2)
             st.rerun()
-        else:
-            st.error("Falta Nombre o Precio.")

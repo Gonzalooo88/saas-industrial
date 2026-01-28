@@ -32,11 +32,10 @@ with c_head_1:
 with c_head_2:
     st.caption(f"📅 {datetime.now().strftime('%d/%m/%Y')}")
 
-# --- BOTONES DE ACCIÓN RÁPIDA (RUTAS DINÁMICAS) ---
+# --- BOTONES DE ACCIÓN RÁPIDA ---
 st.markdown("### ⚡ Acciones Rápidas")
 col_a, col_b, col_c = st.columns(3)
 
-# Definimos las rutas relativas a la carpeta del cliente
 base_path = f"instancias_clientes/{cliente_id}"
 
 with col_a:
@@ -48,14 +47,12 @@ with col_b:
         st.switch_page(f"{base_path}/2_stock.py")
 
 with col_c:
-    # Nota: Antes llamabas al archivo "3_movimientos.py", ahora lo estandarizamos como "3_caja.py"
     if st.button("💵 **Ver Caja**", use_container_width=True):
         st.switch_page(f"{base_path}/3_caja.py")
 
 st.divider()
 
-# --- PROCESAMIENTO DE DATOS (NUEVA ESTRUCTURA) ---
-# 1. Buscamos en la colección anidada
+# --- PROCESAMIENTO DE DATOS ---
 ref_movs = db.collection('instancias').document(cliente_id).collection('movimientos')
 
 try:
@@ -64,56 +61,65 @@ try:
     
     for doc in docs:
         d = doc.to_dict()
-        # Normalización de fechas para Pandas
         if d.get('fecha'):
-            # Convertimos Timestamp de Firebase a datetime de Python sin zona horaria
             d['fecha_dt'] = d['fecha'].replace(tzinfo=None)
             data.append(d)
 
-    # Variables de Fecha Actual
     hoy = datetime.now()
     mes_actual_str = hoy.strftime('%Y-%m')
 
     if not data:
-        st.info("👋 ¡Bienvenido! Aún no hay movimientos registrados en la nueva base de datos.")
+        st.info("👋 ¡Bienvenido! Aún no hay movimientos registrados.")
     else:
         df = pd.DataFrame(data)
-        
-        # 2. Preparar columna mes_anio
         df['mes_anio'] = df['fecha_dt'].dt.strftime('%Y-%m')
         
-        # 3. FILTRAR: Solo datos de este mes y tipo 'Venta'
-        # Nota: Usamos 'monto' en lugar de 'monto_total' porque así lo guarda 1_ventas.py ahora
-        df_este_mes = df[(df['mes_anio'] == mes_actual_str) & (df['tipo'] == 'Venta')]
-
-        # --- KPI: COMPETENCIA VENDEDORES ---
-        st.subheader(f"🏆 Resumen de {hoy.strftime('%B')}") # Nombre del mes
+        # --- FILTROS DE ESTE MES ---
+        # 1. Ventas
+        df_ventas = df[(df['mes_anio'] == mes_actual_str) & (df['tipo'] == 'Venta')]
         
-        if df_este_mes.empty:
+        # 2. Reposiciones (Inversión)
+        df_repo = df[(df['mes_anio'] == mes_actual_str) & (df['tipo'] == 'Reposición')]
+
+        # --- KPI: RESUMEN FINANCIERO DEL MES ---
+        st.subheader(f"🏆 Resumen de {hoy.strftime('%B')}")
+        
+        # Cálculos Generales
+        total_facturado = df_ventas['monto'].sum()
+        total_reinvertido = df_repo['monto'].abs().sum() # Usamos abs() porque reposición se guarda negativo
+        
+        # Mostramos las 2 métricas principales arriba
+        kpi1, kpi2 = st.columns(2)
+        
+        kpi1.metric(
+            label="💰 Total Facturado (Ventas)",
+            value=f"${total_facturado:,.0f}",
+            delta=f"{len(df_ventas)} operaciones"
+        )
+        
+        kpi2.metric(
+            label="🔄 Total Reinvertido (Stock)",
+            value=f"${total_reinvertido:,.0f}",
+            delta=f"{len(df_repo)} reposiciones",
+            delta_color="off" # Color gris neutro para diferenciar de ganancia
+        )
+        
+        st.markdown("---")
+
+        if df_ventas.empty:
             st.warning("No hay ventas registradas en el mes actual.")
         else:
-            # Métricas
-            conteo_vendedores = df_este_mes['vendedor'].value_counts()
+            # --- COMPETENCIA VENDEDORES ---
+            st.write("#### 🥇 Rendimiento por Vendedor")
+            conteo_vendedores = df_ventas['vendedor'].value_counts()
             
-            # Ajustamos columnas dinámicamente según cantidad de vendedores
-            cols_kpi = st.columns(len(conteo_vendedores) + 1)
+            cols_vend = st.columns(len(conteo_vendedores))
             
-            # Total Global
-            total_mes = df_este_mes['monto'].sum()
-            cols_kpi[0].metric(
-                label="Total Facturado", 
-                value=f"${total_mes:,.0f}",
-                delta=f"{len(df_este_mes)} ventas"
-            )
-            
-            # Por Vendedor
-            idx = 1
+            idx = 0
             for vendedor, cantidad in conteo_vendedores.items():
-                # Filtramos por vendedor y sumamos 'monto'
-                monto_vend = df_este_mes[df_este_mes['vendedor'] == vendedor]['monto'].sum()
-                
-                if idx < len(cols_kpi):
-                    cols_kpi[idx].metric(
+                monto_vend = df_ventas[df_ventas['vendedor'] == vendedor]['monto'].sum()
+                if idx < len(cols_vend):
+                    cols_vend[idx].metric(
                         label=vendedor, 
                         value=f"{cantidad} vts", 
                         delta=f"${monto_vend:,.0f}"
@@ -125,10 +131,8 @@ try:
             # --- GRÁFICO: EVOLUCIÓN DIARIA ---
             st.subheader("📈 Ritmo de Ventas Diario")
 
-            # A) Agrupamos ventas reales por fecha
-            ventas_por_dia = df_este_mes.groupby(df_este_mes['fecha_dt'].dt.date)['monto'].sum()
+            ventas_por_dia = df_ventas.groupby(df_ventas['fecha_dt'].dt.date)['monto'].sum()
             
-            # B) Rellenar huecos (días sin ventas)
             inicio_mes = hoy.replace(day=1).date()
             fin_mes = hoy.date()
             
@@ -137,7 +141,7 @@ try:
                 ventas_completas = ventas_por_dia.reindex(rango_fechas.date, fill_value=0)
                 
                 st.line_chart(ventas_completas, color="#2980B9")
-                st.caption("El gráfico muestra la facturación diaria desde el día 1 hasta hoy.")
+                st.caption("Facturación diaria acumulada del mes en curso.")
 
 except Exception as e:
     st.error(f"Error cargando el dashboard: {e}")
