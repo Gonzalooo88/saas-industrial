@@ -1,123 +1,105 @@
 import streamlit as st
-import pandas as pd
-from datetime import datetime, time
-from config import db 
+import os
+import sys
+import time
 
-st.header("⚙️ Administración Operativa")
-st.warning("⚠️ Zona de corrección de datos.")
+# --- CONEXIÓN CON CONFIG.PY (RAÍZ) ---
+ruta_raiz = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
+if ruta_raiz not in sys.path:
+    sys.path.append(ruta_raiz)
 
-# Bloqueo simple
-bloqueo = st.toggle("Habilitar Edición")
-if not bloqueo:
-    st.info("Activa el interruptor para realizar cambios.")
+try:
+    from config import db
+except Exception as e:
+    st.error(f"Error de conexión: {e}")
     st.stop()
 
-# SOLO 3 PESTAÑAS (Operativas)
-tab_retro, tab_producto, tab_ventas = st.tabs([
-    "📅 Cargar Venta Pasada", 
-    "📦 Eliminar Producto", 
-    "🗑️ Eliminar Venta"
-])
+# --- CONFIGURACIÓN DE PRIVACIDAD ---
+cliente_id = os.path.basename(os.path.dirname(__file__))
+COLECCION_PRODUCTOS = f"{cliente_id}_productos"
+COLECCION_MOVIMIENTOS = f"{cliente_id}_movimientos"
+COLECCION_VENTAS = f"{cliente_id}_ventas"
 
-# ---------------------------------------------------------
-# TAB 1: CARGA RETROACTIVA
-# ---------------------------------------------------------
-with tab_retro:
-    st.subheader("Cargar venta con fecha anterior")
+st.set_page_config(page_title="Panel Admin", layout="centered", page_icon="🔧")
+
+st.title(f"🔧 Administración: {cliente_id.replace('_', ' ').title()}")
+st.warning("⚠️ Zona de peligro: Las acciones aquí son irreversibles.")
+
+tab_borrar_prod, tab_reset = st.tabs(["🗑️ Eliminar Productos", "🔥 Resetear Todo"])
+
+# ==========================================
+# TAB 1: ELIMINAR PRODUCTOS ESPECÍFICOS
+# ==========================================
+with tab_borrar_prod:
+    st.subheader("Baja de Artículos")
     
-    # Traemos productos
-    ref_stock = db.collection('facha_shila_productos')
-    docs = ref_stock.stream()
-    productos_dict = {doc.id: doc.to_dict() for doc in docs}
-    
+    # Obtenemos todos los productos
+    docs = db.collection(COLECCION_PRODUCTOS).stream()
     opciones = {}
-    for pid, data in productos_dict.items():
-        label = f"{data.get('modelo')} | {data.get('color')} {data.get('talle')}"
-        opciones[label] = pid
-
-    with st.form("form_retroactivo"):
-        col_fecha, col_vend = st.columns(2)
-        fecha_elegida = col_fecha.date_input("Fecha real de la venta", value="today")
-        vendedor = col_vend.selectbox("¿Quién vendió?", ["Bianca", "Luciano", "Empleado"])
-        
-        c1, c2 = st.columns([3, 1])
-        seleccion = c1.selectbox("Producto", list(opciones.keys()))
-        cantidad = c2.number_input("Cantidad", min_value=1, value=1)
-        
-        if st.form_submit_button("💾 Guardar Venta"):
-            if seleccion:
-                pid = opciones[seleccion]
-                prod = productos_dict[pid]
-                
-                fecha_completa = datetime.combine(fecha_elegida, time(12, 0, 0))
-                total = prod.get('precio_venta', 0) * cantidad
-                
-                db.collection('facha_shila_movimientos').add({
-                    "fecha": fecha_completa, "tipo": "Venta", "producto_modelo": prod.get('modelo'),
-                    "cantidad": cantidad, "monto_total": total, "vendedor": vendedor, "nota": "Carga retroactiva"
-                })
-                
-                ref_stock.document(pid).update({"stock_actual": prod.get('stock_actual', 0) - cantidad})
-                st.success(f"✅ Venta guardada.")
-                st.rerun()
-
-# ---------------------------------------------------------
-# TAB 2: ELIMINAR PRODUCTO
-# ---------------------------------------------------------
-with tab_producto:
-    st.subheader("Limpiar catálogo")
-    st.caption("Borrar productos que ya no existen.")
     
-    all_docs = ref_stock.stream()
-    dict_prods = {d.id: d.to_dict() for d in all_docs}
-    
-    lista_borrar = {f"{d['modelo']} ({d['color']} {d['talle']})": id_ for id_, d in dict_prods.items()}
-    seleccion_borrar = st.selectbox("Producto a eliminar", [""] + list(lista_borrar.keys()))
-    
-    if seleccion_borrar:
-        id_borrar = lista_borrar[seleccion_borrar]
-        if st.button("🔥 Borrar Definitivamente", type="primary"):
-            ref_stock.document(id_borrar).delete()
-            st.success("Producto eliminado.")
-            st.rerun()
-
-# ---------------------------------------------------------
-# TAB 3: ELIMINAR VENTAS
-# ---------------------------------------------------------
-with tab_ventas:
-    st.subheader("Anular Ventas")
-    
-    ref_movs = db.collection('facha_shila_movimientos')
-    # Traemos ultimas 50 y filtramos en Python para evitar errores de índice
-    docs_raw = ref_movs.order_by("fecha", direction="DESCENDING").limit(50).stream()
-    
-    lista_movs = []
-    for doc in docs_raw:
+    for doc in docs:
         d = doc.to_dict()
-        if d.get('tipo') == 'Venta':
-            fecha_str = d['fecha'].strftime('%d/%m %H:%M') if d.get('fecha') else "S/F"
-            label = f"{fecha_str} | {d.get('producto_modelo')} | ${d.get('monto_total',0):,.0f} ({d.get('vendedor')})"
-            d['id'] = doc.id
-            lista_movs.append((label, d))
-
-    if not lista_movs:
-        st.info("No hay ventas recientes.")
-    else:
-        opcion = st.selectbox("Selecciona venta a borrar", options=lista_movs, format_func=lambda x: x[0])
+        p_id = doc.id
         
-        if opcion:
-            lbl, dat = opcion
-            st.write(f"Vas a borrar: **{lbl}**")
-            devolver = st.checkbox("Devolver stock", value=True)
+        # LÓGICA BLINDADA: Si falta algún dato, ponemos un texto genérico
+        modelo = d.get('modelo', 'Sin Nombre')
+        marca = d.get('marca', '')
+        
+        # Detectar si es formato nuevo (variantes) o viejo
+        if 'variantes' in d:
+            info_extra = f"({len(d['variantes'])} variantes)"
+        elif 'detalles' in d:
+            info_extra = "(Formato antiguo)"
+        else:
+            info_extra = "(Datos incompletos)"
+            
+        label = f"{modelo} {marca} - {info_extra}"
+        opciones[label] = p_id
 
-            if st.button("🗑️ Eliminar", type="primary"):
-                if devolver and dat.get('producto_modelo'):
-                    q = ref_stock.where("modelo", "==", dat['producto_modelo']).limit(1).stream()
-                    found = list(q)
-                    if found:
-                        current = found[0].to_dict().get('stock_actual', 0)
-                        ref_stock.document(found[0].id).update({"stock_actual": current + dat.get('cantidad', 1)})
-                
-                ref_movs.document(dat['id']).delete()
-                st.success("Venta eliminada.")
+    if not opciones:
+        st.info("No hay productos cargados en la base de datos.")
+    else:
+        seleccion = st.selectbox("Selecciona el producto a eliminar:", list(opciones.keys()))
+        
+        if st.button("🗑️ Eliminar Producto Seleccionado", type="primary"):
+            id_a_borrar = opciones[seleccion]
+            try:
+                db.collection(COLECCION_PRODUCTOS).document(id_a_borrar).delete()
+                st.success("✅ Producto eliminado correctamente.")
+                time.sleep(1)
                 st.rerun()
+            except Exception as e:
+                st.error(f"Error al borrar: {e}")
+
+# ==========================================
+# TAB 2: RESET TOTAL (ÚTIL PARA LIMPIAR PRUEBAS)
+# ==========================================
+with tab_reset:
+    st.error("☢️ ZONA PELIGROSA: ESTO BORRARÁ TODO")
+    st.write("Utiliza esto solo si quieres limpiar la base de datos completa para empezar de cero con el nuevo sistema.")
+    
+    check_seguridad = st.checkbox("Soy consciente de que perderé todo el stock y las ventas.")
+    
+    if st.button("🔥 BORRAR BASE DE DATOS COMPLETA") and check_seguridad:
+        with st.status("Limpiando base de datos...", expanded=True) as status:
+            batch = db.batch()
+            count = 0
+            
+            # Borrar Productos
+            docs_p = db.collection(COLECCION_PRODUCTOS).list_documents()
+            for d in docs_p:
+                d.delete()
+                count += 1
+            st.write(f"Eliminados {count} productos.")
+            
+            # Borrar Movimientos
+            docs_m = db.collection(COLECCION_MOVIMIENTOS).list_documents()
+            for d in docs_m:
+                d.delete()
+            st.write("Historial de movimientos eliminado.")
+            
+            status.update(label="¡Limpieza completada!", state="complete", expanded=False)
+            
+        st.success("El sistema ha quedado limpio como el día 1.")
+        time.sleep(2)
+        st.rerun()
