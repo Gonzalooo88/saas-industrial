@@ -1,12 +1,11 @@
 import streamlit as st
 import os
-from config import db  # <--- Conexión centralizada
+from config import db 
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-# Título genérico en la pestaña del navegador
-st.set_page_config(page_title="Portal de Gestión", layout="wide", page_icon="🏢")
+st.set_page_config(page_title="Portal de Acceso", layout="wide", page_icon="🔒")
 
-# --- GESTIÓN DE ESTADO ---
+# --- GESTIÓN DE SESIÓN ---
 if 'password_correct' not in st.session_state:
     st.session_state.password_correct = False
 if 'usuario' not in st.session_state:
@@ -14,36 +13,29 @@ if 'usuario' not in st.session_state:
 if 'rol' not in st.session_state:
     st.session_state.rol = None
 if 'empresa_id' not in st.session_state:
-    st.session_state.empresa_id = None # Guardamos qué empresa eligió
+    st.session_state.empresa_id = None
 
-# --- DETECTAR CLIENTES DISPONIBLES ---
-def obtener_empresas():
-    """Escanea la carpeta 'instancias_clientes' para ver qué empresas existen."""
-    ruta = "instancias_clientes"
-    if not os.path.exists(ruta):
-        return []
-    # Busca carpetas que no sean archivos ocultos ni __pycache__
-    empresas = [f for f in os.listdir(ruta) if os.path.isdir(os.path.join(ruta, f)) and "__" not in f]
-    return sorted(empresas)
+# --- DETECTAR SI HAY UN LINK MÁGICO (?cliente=facha_shila) ---
+# Esto permite que si entran con el link especial, el campo se llene solo
+query_params = st.query_params
+empresa_url = query_params.get("cliente", None)
 
-# --- PANTALLA DE LOGIN GENÉRICA ---
+# --- PANTALLA DE LOGIN ---
 def login_screen():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.markdown("## 🔐 Portal de Acceso Clientes")
-        st.caption("Seleccione su empresa para ingresar al sistema.")
-        
-        empresas_disponibles = obtener_empresas()
+        st.markdown("## 🔐 Ingreso al Sistema")
+        st.caption("Introduce tus credenciales.")
         
         with st.form("login_form"):
-            # 1. SELECTOR DE EMPRESA
-            # Creamos un diccionario para mostrar nombres bonitos
-            # ej: "facha_shila" -> "Facha Shila"
-            mapa_nombres = {e: e.replace("_", " ").title() for e in empresas_disponibles}
-            empresa_seleccionada = st.selectbox(
-                "🏢 Empresa / Negocio", 
-                options=["Seleccionar..."] + list(mapa_nombres.values())
-            )
+            # 1. CÓDIGO DE EMPRESA (Ahora es Texto, no Lista)
+            if empresa_url:
+                # Si viene del link, lo mostramos bloqueado (más pro)
+                empresa_input = st.text_input("🏢 Código de Empresa", value=empresa_url, disabled=True)
+                st.caption("🔒 Empresa detectada automáticamente por el enlace.")
+            else:
+                # Si entra directo, tiene que escribirlo
+                empresa_input = st.text_input("🏢 Código de Empresa (ID)", placeholder="Ej: facha_shila")
             
             st.divider()
             
@@ -51,50 +43,49 @@ def login_screen():
             usuario = st.text_input("Usuario")
             password = st.text_input("Contraseña", type="password")
             
-            submit = st.form_submit_button("Ingresar al Sistema", use_container_width=True)
+            submit = st.form_submit_button("Ingresar", use_container_width=True)
             
             if submit:
-                # Validaciones básicas
-                if empresa_seleccionada == "Seleccionar...":
-                    st.warning("⚠️ Por favor selecciona tu empresa.")
-                    return
-                if not usuario or not password:
-                    st.warning("⚠️ Completa usuario y contraseña.")
+                # Validaciones
+                if not empresa_input or not usuario or not password:
+                    st.warning("⚠️ Por favor completa todos los campos.")
                     return
 
-                # Recuperar el ID de la carpeta (ej: "Facha Shila" -> "facha_shila")
-                # Invertimos el diccionario para buscar la key por el value
-                empresa_id = [k for k, v in mapa_nombres.items() if v == empresa_seleccionada][0]
-
-                # Construir nombre de colección: "facha_shila_usuarios"
-                collection_name = f"{empresa_id}_usuarios"
+                # Normalizamos el ID (minusculas, sin espacios extra)
+                empresa_id_clean = empresa_input.lower().strip()
                 
+                # Verificar si la carpeta existe (Si el cliente es real)
+                path_cliente = os.path.join("instancias_clientes", empresa_id_clean)
+                
+                if not os.path.exists(path_cliente):
+                    # SEGURIDAD: Mensaje genérico para no dar pistas
+                    st.error("❌ Error: Empresa o usuario incorrecto.") 
+                    return
+
                 # --- VALIDACIÓN EN BASE DE DATOS ---
+                collection_name = f"{empresa_id_clean}_usuarios"
                 doc_ref = db.collection(collection_name).document(usuario)
                 doc = doc_ref.get()
 
                 if doc.exists:
                     data = doc.to_dict()
                     
-                    # A. Verificar si está ACTIVO
                     if not data.get('activo', True):
-                        st.error("🚫 Usuario deshabilitado. Contacte a soporte.")
+                        st.error("🚫 Cuenta deshabilitada.")
                         return
 
-                    # B. Verificar CONTRASEÑA
                     if data.get('pass') == password:
                         st.session_state.password_correct = True
                         st.session_state.usuario = usuario
                         st.session_state.rol = data.get('rol', 'vendedor')
-                        st.session_state.empresa_id = empresa_id # <--- CLAVE: Guardamos dónde estamos
-                        st.toast(f"Bienvenido a {empresa_seleccionada}", icon="🚀")
+                        st.session_state.empresa_id = empresa_id_clean
                         st.rerun()
                     else:
-                        st.error("❌ Contraseña incorrecta.")
+                        st.error("❌ Credenciales inválidas.")
                 else:
-                    st.error("❌ Usuario no encontrado en esta empresa.")
+                    st.error("❌ Credenciales inválidas.")
 
-# --- FUNCIÓN DE LOGOUT ---
+# --- LOGOUT ---
 def logout():
     st.session_state.password_correct = False
     st.session_state.usuario = None
@@ -102,16 +93,12 @@ def logout():
     st.session_state.empresa_id = None
     st.rerun()
 
-# --- CEREBRO DE NAVEGACIÓN ---
+# --- NAVEGACIÓN ---
 if not st.session_state.password_correct:
     pg = st.navigation([st.Page(login_screen, title="Acceso")])
     pg.run()
-
 else:
-    # --- USUARIO LOGUEADO: CARGAR APP ESPECÍFICA ---
-    
-    # Usamos la empresa_id guardada para saber qué carpeta leer
-    # Ej: instancias_clientes/ferreteria_pepe
+    # --- CARGAR SISTEMA DEL CLIENTE ---
     empresa_actual = st.session_state.empresa_id
     path_cliente = os.path.join("instancias_clientes", empresa_actual)
     
@@ -119,36 +106,20 @@ else:
     
     if os.path.exists(path_cliente):
         archivos = [f for f in os.listdir(path_cliente) if f.endswith(".py") and "__" not in f]
-        
         for archivo in archivos:
-            ruta_archivo = os.path.join(path_cliente, archivo)
-            # Nombre menú: "1_ventas.py" -> "Ventas"
-            nombre_menu = archivo.replace(".py", "").replace("_", " ").title()
-            
-            # FILTRO DE SEGURIDAD VISUAL (Opcional)
-            # Si el usuario es vendedor, y el archivo dice "Admin", podríamos ocultarlo
-            # Pero por ahora lo dejamos simple. Tu admin interno ya tiene contraseña o bloqueo.
-            
-            paginas.append(st.Page(ruta_archivo, title=nombre_menu))
-            
+            ruta = os.path.join(path_cliente, archivo)
+            nombre = archivo.replace(".py", "").replace("_", " ").title()
+            paginas.append(st.Page(ruta, title=nombre))
         paginas.sort(key=lambda x: x.title)
-        
-    else:
-        st.error(f"⚠️ Error Crítico: No se encuentra la carpeta de la empresa '{empresa_actual}'.")
-
-    # --- EJECUCIÓN FINAL ---
+    
     if paginas:
         pg = st.navigation(paginas)
-        
         with st.sidebar:
             st.subheader(f"🏢 {empresa_actual.replace('_', ' ').title()}")
             st.divider()
             st.write(f"👤 **{st.session_state.usuario}**")
-            st.caption(f"Rol: {st.session_state.rol}")
-            
-            if st.button("Cerrar Sesión", type="primary", use_container_width=True):
+            if st.button("Salir", type="primary", use_container_width=True):
                 logout()
-                
         pg.run()
     else:
-        st.warning("No hay módulos disponibles para esta empresa.")
+        st.error("No se encontraron módulos.")
