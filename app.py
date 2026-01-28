@@ -115,7 +115,7 @@ else:
         st.Page("instancias_clientes/facha_shila/0_inicio.py", title="Inicio", icon="🏠"),
         st.Page("instancias_clientes/facha_shila/1_ventas.py", title="💰 Ventas", icon="🛒"),
         st.Page("instancias_clientes/facha_shila/2_stock.py", title="📦 Stock", icon="📦"),
-        st.Page("instancias_clientes/facha_shila/3_caja.py", title="💵 Caja", icon="💵"), # Icono corregido
+        st.Page("instancias_clientes/facha_shila/3_movimientos.py", title="💵 movimientos", icon="💵"), # Icono corregido
         st.Page("instancias_clientes/facha_shila/4_admin.py", title="⚙️ Admin Local", icon="⚙️"),
     ])
     
