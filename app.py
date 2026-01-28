@@ -14,15 +14,16 @@ except ImportError:
 # --- SESIÓN ---
 if 'logueado' not in st.session_state: st.session_state.logueado = False
 if 'usuario' not in st.session_state: st.session_state.usuario = ""
+if 'rol' not in st.session_state: st.session_state.rol = ""
 if 'carpeta_cliente' not in st.session_state: st.session_state.carpeta_cliente = ""
 
-# --- DICCIONARIO VISUAL (Solo para ponerle iconos bonitos si el nombre coincide) ---
+# --- DICCIONARIO VISUAL ---
 INFO_MODULOS = {
-    "0_inicio.py": {"titulo": "Inicio", "icon": "🏠"},
-    "1_ventas.py": {"titulo": "Ventas", "icon": "🛒"},
-    "2_stock.py":  {"titulo": "Stock",  "icon": "📦"},
-    "3_movimientos.py":   {"titulo": "Movimientos",   "icon": "💵"},
-    "4_admin.py":  {"titulo": "Admin",  "icon": "⚙️"},
+    "0_inicio.py":      {"titulo": "Inicio",       "icon": "🏠"},
+    "1_ventas.py":      {"titulo": "Ventas",       "icon": "🛒"},
+    "2_stock.py":       {"titulo": "Stock",        "icon": "📦"},
+    "3_movimientos.py": {"titulo": "Movimientos",  "icon": "💵"},
+    "4_admin.py":       {"titulo": "Admin",        "icon": "⚙️"},
 }
 
 query_params = st.query_params
@@ -31,7 +32,7 @@ empresa_param = query_params.get("empresa", None)
 # --- LOGIN ---
 def login():
     st.title("🔐 Login")
-    if empresa_param: st.info(f"Portal: **{empresa_param}**")
+    if empresa_param: st.info(f"Portal: **{empresa_param.upper().replace('_', ' ')}**")
     
     with st.form("login"):
         u = st.text_input("Usuario")
@@ -47,21 +48,37 @@ def login():
             data = res[0].to_dict()
             carpeta = data.get('carpeta_instancia')
             
-            # 2. Validaciones de Seguridad
+            # --- VALIDACIONES DE SEGURIDAD ---
+
+            # 1. Validar Link de Invitación
             if empresa_param and carpeta != empresa_param:
                 st.error("Usuario no autorizado en este portal.")
                 return
+            
+            # 2. Validar Estado del Usuario (Toggle Individual)
             if not data.get('activo', True):
-                st.error("Usuario inactivo.")
+                st.error("⛔ Usuario inactivo. Contacte a su administrador.")
                 return
 
-            # 3. Validar que la carpeta exista físicamente
+            # 3. Validar Estado de la Empresa (Toggle General del Super Admin) [NUEVO]
+            doc_empresa = db.collection('instancias').document(carpeta).get()
+            
+            if doc_empresa.exists:
+                empresa_data = doc_empresa.to_dict()
+                if not empresa_data.get('activo', True):
+                    st.error("⛔ La empresa ha sido deshabilitada temporalmente. Contacte soporte.")
+                    return
+            else:
+                st.error("⚠️ Error crítico: La empresa asignada no existe en base de datos.")
+                return
+
+            # 4. Validar que la carpeta exista físicamente
             ruta = f"instancias_clientes/{carpeta}"
             if not os.path.isdir(ruta):
                 st.error(f"⚠️ Error Crítico: No se encuentra el software para '{carpeta}'. Contacte soporte.")
                 return
 
-            # 4. Login OK
+            # --- LOGIN EXITOSO ---
             st.session_state.logueado = True
             st.session_state.usuario = data['usuario']
             st.session_state.rol = data['rol']
@@ -82,16 +99,19 @@ else:
         st.divider()
         if st.button("Salir"): logout()
 
-    # --- AQUÍ ESTÁ LA LÓGICA QUE PIDES ---
-    # Busca archivos SOLO en la carpeta del cliente
+    # --- LÓGICA DE DETECCIÓN DE ARCHIVOS ---
     ruta_cliente = f"instancias_clientes/{st.session_state.carpeta_cliente}"
     
-    archivos = [f for f in os.listdir(ruta_cliente) if f.endswith(".py") and not f.startswith("_")]
-    archivos.sort() # Orden alfabético
+    # Listar archivos .py ignorando los que empiezan con _
+    if os.path.exists(ruta_cliente):
+        archivos = [f for f in os.listdir(ruta_cliente) if f.endswith(".py") and not f.startswith("_")]
+        archivos.sort()
+    else:
+        archivos = []
     
     paginas = []
     for arch in archivos:
-        # Detectamos nombre bonito e icono
+        # Detectamos nombre bonito e icono usando el diccionario
         info = INFO_MODULOS.get(arch, {"titulo": arch.replace(".py","").title(), "icon": "📄"})
         paginas.append(st.Page(f"{ruta_cliente}/{arch}", title=info['titulo'], icon=info['icon']))
     
