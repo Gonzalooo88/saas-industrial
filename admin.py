@@ -57,14 +57,13 @@ with tab_gestion:
                 with c1:
                     st.markdown(f"### 🏢 {cli.get('nombre', 'Sin Nombre')} (`{cli['id']}`)")
                     
-                    # --- CHECK FÍSICO (NUEVO) ---
-                    # Verificamos si la carpeta existe realmente para evitar errores
+                    # --- CHECK FÍSICO ---
                     ruta_fisica = f"instancias_clientes/{cli['id']}"
                     if os.path.isdir(ruta_fisica):
                         archivos = [f for f in os.listdir(ruta_fisica) if f.endswith('.py')]
                         st.caption(f"✅ Carpeta física OK | Módulos detectados: {len(archivos)}")
                     else:
-                        st.error(f"⚠️ ALERTA: La carpeta física '{ruta_fisica}' NO EXISTE. Crea la carpeta manualmente.")
+                        st.error(f"⚠️ ALERTA: La carpeta física '{ruta_fisica}' NO EXISTE.")
 
                     # Link de invitación
                     link = f"{URL_APP}/?empresa={cli['id']}"
@@ -72,9 +71,25 @@ with tab_gestion:
 
                 with c2:
                     st.write("**Estado**")
-                    act = cli.get('activo', True)
-                    if st.toggle("Activo", value=act, key=f"tg_cli_{cli['id']}") != act:
-                        ref_instancias.document(cli['id']).update({"activo": not act})
+                    estado_actual_db = cli.get('activo', True)
+                    
+                    # --- CORRECCIÓN AQUÍ ---
+                    # 1. Guardamos el estado del toggle en una variable
+                    nuevo_estado = st.toggle("Habilitada", value=estado_actual_db, key=f"tg_cli_{cli['id']}")
+                    
+                    # 2. Comparamos: Si lo que muestra el toggle es distinto a la DB, actualizamos
+                    if nuevo_estado != estado_actual_db:
+                        # Actualizamos Firebase
+                        ref_instancias.document(cli['id']).update({"activo": nuevo_estado})
+                        
+                        # Feedback visual para saber que funcionó
+                        if nuevo_estado:
+                            st.toast(f"✅ {cli['nombre']} Habilitada")
+                        else:
+                            st.toast(f"⛔ {cli['nombre']} Deshabilitada")
+                        
+                        # 3. ESPERAMOS para que Firebase procese el cambio antes de recargar
+                        tm.sleep(1.5) 
                         st.rerun()
                 
                 # --- GESTIÓN DE USUARIOS ---
@@ -100,7 +115,7 @@ with tab_gestion:
                                 u_act = u.get('activo', True)
                                 if st.checkbox("Habilitado", value=u_act, key=f"u_act_{u['uid']}") != u_act:
                                     users_ref.document(u['uid']).update({"activo": not u_act})
-                                    st.toast("Estado actualizado")
+                                    st.toast("Estado usuario actualizado")
                                     tm.sleep(0.5)
                                     st.rerun()
                             
@@ -113,7 +128,7 @@ with tab_gestion:
                             st.divider()
 
 # ------------------------------------------------------------------------------
-# TAB 2: CREAR NUEVA EMPRESA (CON CREACIÓN DE CARPETA)
+# TAB 2: CREAR NUEVA EMPRESA
 # ------------------------------------------------------------------------------
 with tab_crear_cliente:
     st.subheader("Alta de Empresa")
@@ -131,43 +146,36 @@ with tab_crear_cliente:
         
         if st.form_submit_button("Crear Infraestructura"):
             if id_carp and u_adm and p_adm:
-                # 1. Validar DB
                 check = ref_instancias.document(id_carp).get()
                 if check.exists:
                     st.error("⚠️ El ID ya existe en la Base de Datos.")
                     st.stop()
                 
-                # 2. Validar Carpeta Física
                 ruta_final = f"instancias_clientes/{id_carp}"
                 if os.path.exists(ruta_final):
                     st.error(f"⚠️ La carpeta '{ruta_final}' ya existe en el servidor.")
                     st.stop()
 
                 try:
-                    # 3. CREAR CARPETA FÍSICA
                     os.makedirs(ruta_final)
-                    # Creamos un archivo oculto para que git/sistema reconozca la carpeta
                     with open(f"{ruta_final}/__init__.py", "w") as f:
                         f.write("# Carpeta de cliente")
 
-                    # 4. CREAR EN DB (Empresa)
                     ref_instancias.document(id_carp).set({
                         "nombre": nombre, "creado_el": datetime.datetime.now(), "activo": True
                     })
                     
-                    # 5. CREAR EN DB (Usuario Admin)
                     db.collection('saas_usuarios_global').add({
                         "usuario": u_adm, "password": p_adm, "rol": "admin",
                         "carpeta_instancia": id_carp, "activo": True, "fecha_alta": datetime.datetime.now()
                     })
                     
-                    st.success(f"✅ ¡Listo! Carpeta `{ruta_final}` creada vacía. Ahora sube los archivos .py ahí.")
+                    st.success(f"✅ ¡Listo! Carpeta `{ruta_final}` creada.")
                     tm.sleep(2)
                     st.rerun()
 
                 except Exception as e:
-                    st.error(f"Error creando carpeta o datos: {e}")
-
+                    st.error(f"Error: {e}")
             else:
                 st.warning("Completa todos los campos.")
 
