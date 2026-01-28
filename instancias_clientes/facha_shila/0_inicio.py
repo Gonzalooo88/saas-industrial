@@ -48,7 +48,7 @@ with col_b:
 
 with col_c:
     if st.button("💵 **Ver Caja**", use_container_width=True):
-        st.switch_page(f"{base_path}/3_caja.py")
+        st.switch_page(f"{base_path}/3_movimientos.py")
 
 st.divider()
 
