@@ -1,10 +1,7 @@
 import streamlit as st
 import pandas as pd
-# --- CORRECCIÓN DE IMPORT ---
-# Importamos 'time' como módulo para usar sleep
-import time 
-# Importamos 'time' de datetime con un ALIAS (dt_time) para no confundirnos
-from datetime import datetime, time as dt_time 
+import time  # ESTE ES EL MODULO PARA SLEEP
+from datetime import datetime, time as dt_time # ESTE ES EL RELOJ (ALIAS)
 import os
 import sys
 
@@ -114,7 +111,7 @@ with tab_retro:
                     batch.update(ref_p, {"variantes": vars_actuales})
                     
                     # 2. Crear movimiento con fecha vieja
-                    # USAMOS dt_time AQUI PARA EVITAR EL ERROR
+                    # AQUÍ USAMOS dt_time (el alias) PARA EVITAR EL ERROR
                     fecha_completa = datetime.combine(fecha_elegida, dt_time(12, 0, 0))
                     desc_prod = f"{p_info['modelo']} ({var_elegida['talle']} {var_elegida['color']})"
                     
@@ -129,7 +126,7 @@ with tab_retro:
                     
                     batch.commit()
                     st.success(f"✅ Venta guardada del día {fecha_elegida}")
-                    time.sleep(1) # Ahora sí funciona el sleep
+                    time.sleep(1) # AQUÍ USAMOS time (el módulo)
                     st.rerun()
                 except Exception as e:
                     st.error(f"Error al guardar: {e}")
@@ -191,10 +188,10 @@ with tab_ventas:
             lbl, mov_id, datos_mov = opcion
             
             st.info(f"Vas a eliminar: **{lbl}**")
-            st.warning("⚠️ Nota: Al borrar la venta, el dinero se descuenta de la caja, pero el STOCK NO SE REPONE automáticamente (para evitar errores en variantes). Debes reponerlo manualmente en la pestaña de Stock.")
+            st.warning("⚠️ Nota: Al borrar la venta, el dinero se descuenta de la caja, pero el STOCK NO SE REPONE automáticamente. Debes reponerlo manualmente.")
             
             if st.button("🗑️ Confirmar Eliminación", type="primary"):
                 ref_movs.document(mov_id).delete()
                 st.success("Registro de venta eliminado correctamente.")
-                time.sleep(1.5) # Aquí estaba el error, ahora funcionará
+                time.sleep(1.5) # Ahora sí funciona
                 st.rerun()
