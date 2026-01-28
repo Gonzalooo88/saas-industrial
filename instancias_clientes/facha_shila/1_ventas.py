@@ -11,15 +11,16 @@ if ruta_raiz not in sys.path:
 
 try:
     from config import db
-except ImportError:
-    st.error("❌ Error de conexión.")
+except Exception as e:
+    st.error(f"Error de conexión: {e}")
     st.stop()
 
+# --- CONFIGURACIÓN DE PRIVACIDAD ---
 cliente_id = os.path.basename(os.path.dirname(__file__))
 COLECCION_PRODUCTOS = f"{cliente_id}_productos"
-COLECCION_MOVIMIENTOS = f"{cliente_id}_movimientos" # Cambiado para que coincida con tu panel
+COLECCION_MOVIMIENTOS = f"{cliente_id}_movimientos"
 
-st.set_page_config(page_title="Ventas", layout="wide")
+st.set_page_config(page_title="Ventas - Facha y Shila", layout="wide")
 
 if 'carrito' not in st.session_state:
     st.session_state.carrito = []
@@ -29,8 +30,8 @@ st.title("💸 Punto de Venta")
 col_busqueda, col_carrito = st.columns([1.2, 1])
 
 with col_busqueda:
-    st.subheader("🔍 Productos")
-    busqueda = st.text_input("Buscar modelo...")
+    st.subheader("🔍 Buscar Productos")
+    busqueda = st.text_input("Modelo o marca...")
     
     if busqueda:
         docs = db.collection(COLECCION_PRODUCTOS).stream()
@@ -59,18 +60,18 @@ with col_busqueda:
                         c1.error("Sin stock")
 
 with col_carrito:
-    st.subheader("🛒 Carrito")
+    st.subheader("🛒 Carrito de Compra")
     if not st.session_state.carrito:
-        st.info("Vacío")
+        st.info("Carrito vacío")
     else:
         total_v = sum(i['precio'] for i in st.session_state.carrito)
         costo_v = sum(i['costo'] for i in st.session_state.carrito)
         
-        promo = st.toggle("Modo Promo")
-        precio_final = st.number_input("Precio Final", value=total_v) if promo else total_v
+        promo = st.toggle("✨ Modo Promo / Descuento")
+        precio_final = st.number_input("Precio Final Cobrado", value=total_v) if promo else total_v
         
         ganancia = precio_final - costo_v
-        st.metric("Ganancia Venta", f"${ganancia:.2f}", delta=f"{ganancia:.2f}")
+        st.metric("Ganancia de esta venta", f"${ganancia:.2f}")
 
         if st.button("🚀 CONFIRMAR VENTA", use_container_width=True):
             batch = db.batch()
@@ -80,16 +81,16 @@ with col_carrito:
                 s_key = 'stock_por_talle' if item['categoria'] == "Ropa" else 'stock'
                 batch.update(p_ref, {f"detalles.{s_key}": p_doc['detalles'][s_key] - 1})
 
-            mov_id = f"MOV-{int(time.time())}"
+            mov_id = f"VTA-{int(time.time())}"
             batch.set(db.collection(COLECCION_MOVIMIENTOS).document(mov_id), {
                 "tipo": "Venta",
                 "monto": precio_final,
                 "ganancia": ganancia,
-                "productos": [i['modelo'] for i in st.session_state.carrito],
+                "productos": [f"{i['modelo']} ({i.get('talle', 'N/A')})" for i in st.session_state.carrito],
                 "fecha": datetime.now()
             })
             batch.commit()
             st.session_state.carrito = []
-            st.success("Venta registrada!")
+            st.success("✅ Venta registrada con éxito")
             time.sleep(1)
             st.rerun()
