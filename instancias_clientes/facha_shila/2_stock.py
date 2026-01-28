@@ -42,71 +42,20 @@ CATEGORIAS = {
     "Otro": ["Detalle"]
 }
 
-# --- CSS MEJORADO (ENCAPSULADO) ---
-st.markdown("""
-    <style>
-    .stock-card { 
-        background-color: white; 
-        padding: 20px; 
-        border-radius: 12px; 
-        border: 1px solid #e0e0e0; 
-        margin-bottom: 20px; 
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-    }
-    .badge-cat { 
-        background-color: #e3f2fd; 
-        color: #1565c0; 
-        padding: 4px 10px; 
-        border-radius: 12px; 
-        font-size: 0.75rem; 
-        font-weight: 700; 
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    .variants-container {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-top: 15px;
-        padding-top: 15px;
-        border-top: 1px solid #f0f0f0;
-    }
-    .variant-pill {
-        background-color: #f8f9fa;
-        border: 1px solid #eee;
-        border-radius: 6px;
-        padding: 4px 10px;
-        font-size: 0.9rem;
-        color: #444;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-    .qty-badge {
-        font-weight: bold;
-        padding: 2px 6px;
-        border-radius: 4px;
-        font-size: 0.85rem;
-    }
-    .qty-high { background-color: #e8f5e9; color: #2e7d32; } 
-    .qty-low { background-color: #ffebee; color: #c62828; }  
-    </style>
-""", unsafe_allow_html=True)
-
 # --- HELPER ---
 def formatear_variante_texto(var_dict):
-    partes = []
+    parts = []
     ignorar = ['stock', 'sku']
     for k, v in var_dict.items():
         if k not in ignorar:
-            partes.append(str(v))
-    return " - ".join(partes) if partes else "Único"
+            parts.append(str(v))
+    return " - ".join(parts) if parts else "Único"
 
 # --- PESTAÑAS ---
 tab_ver, tab_reponer, tab_nuevo = st.tabs(["👁️ Visualizar Stock", "🔄 Reposición / Ajuste", "➕ Crear Nuevo Modelo"])
 
 # ==============================================================================
-# 1. VISUALIZAR STOCK (CORREGIDO)
+# 1. VISUALIZAR STOCK (VERSIÓN NATIVA SIN HTML RARO)
 # ==============================================================================
 with tab_ver:
     c1, c2 = st.columns([1, 2])
@@ -128,49 +77,45 @@ with tab_ver:
         variantes = p.get('variantes', [])
         total_stock = sum(v.get('stock', 0) for v in variantes)
         
-        # --- CONSTRUCCIÓN ROBUSTA DEL HTML ---
-        html_variantes = ""
-        
-        if not variantes:
-            html_variantes = "<div style='color:orange; padding:10px;'>⚠️ Sin variantes cargadas</div>"
-        else:
-            for v in variantes:
-                desc = formatear_variante_texto(v)
-                qty = v.get('stock', 0)
-                clase_qty = "qty-high" if qty > 2 else "qty-low"
-                
-                # Concatenamos el string
-                html_variantes += f"""
-                <div class="variant-pill">
-                    <span>{desc}</span>
-                    <span class="qty-badge {clase_qty}">{qty} u.</span>
-                </div>
-                """
-
-        # Creamos TODA la tarjeta en una sola variable string
-        tarjeta_html = f"""
-        <div class="stock-card">
-            <div style="display:flex; justify-content:space-between; align-items:start;">
-                <div>
-                    <span class="badge-cat">{p.get('categoria', 'Gral')}</span>
-                    <h3 style="margin: 8px 0 4px 0; color:#222;">{p.get('modelo')}</h3>
-                    <div style="color:#666; font-size:0.9rem;">Marca: {p.get('marca', 'Genérica')}</div>
-                </div>
-                <div style="text-align:right;">
-                    <div style="font-size:1.4rem; font-weight:800; color:#333;">${p.get('precio_venta', 0):,.0f}</div>
-                    <div style="font-size:0.8rem; color:#888;">Costo: ${p.get('costo', 0):,.0f}</div>
-                    <div style="font-size:0.9rem; font-weight:bold; color:#1976d2; margin-top:5px;">Total: {total_stock} u.</div>
-                </div>
-            </div>
+        # --- TARJETA NATIVA (USANDO st.container CON BORDE) ---
+        # Esto crea el recuadro gris/blanco automáticamente
+        with st.container(border=True):
             
-            <div class="variants-container">
-                {html_variantes}
-            </div>
-        </div>
-        """
-        
-        # Renderizamos con unsafe_allow_html ACTIVADO
-        st.markdown(tarjeta_html, unsafe_allow_html=True)
+            # Encabezado de la tarjeta
+            col_head_1, col_head_2 = st.columns([3, 1])
+            
+            with col_head_1:
+                # Título y detalles
+                st.markdown(f"### {p.get('modelo')}")
+                st.caption(f"🏷️ {p.get('categoria', 'Gral')} | Marca: {p.get('marca', 'Genérica')}")
+            
+            with col_head_2:
+                # Precios alineados a la derecha (visualmente)
+                st.markdown(f"### ${p.get('precio_venta', 0):,.0f}")
+                st.caption(f"Stock Total: **{total_stock}**")
+
+            st.divider() # Línea separadora fina
+            
+            # --- VARIANTES (GRILLA) ---
+            if not variantes:
+                st.warning("Sin variantes cargadas.")
+            else:
+                # Usamos columnas nativas para mostrar las variantes ordenadas
+                # Creamos 4 columnas para que queden como una grilla
+                cols_vars = st.columns(4)
+                
+                for i, v in enumerate(variantes):
+                    desc = formatear_variante_texto(v)
+                    qty = v.get('stock', 0)
+                    
+                    # Color condicional nativo de Streamlit
+                    color_stock = "green" if qty > 2 else "red"
+                    
+                    # Escribimos en la columna correspondiente (ciclo 0,1,2,3)
+                    with cols_vars[i % 4]:
+                        # Usamos sintaxis de color de Streamlit: :color[texto]
+                        st.markdown(f"**{desc}**")
+                        st.markdown(f":{color_stock}[Stock: {qty} u.]")
 
     if not encontrados:
         st.info("No se encontraron productos con los filtros actuales.")
@@ -249,7 +194,6 @@ with tab_reponer:
 
                     batch.update(ref_doc, {"variantes": new_vars_list})
                     
-                    # Movimiento
                     mid = f"REP-{int(tm.time())}"
                     desc_texto = f"{data['modelo']} - {', '.join(inputs_clean.values())} (+{cant_repo})"
                     
