@@ -3,10 +3,10 @@ import pandas as pd
 import os
 import sys
 
-# --- IMPORTACIONES LIMPIAS (SIN CONFLICTOS) ---
-import time       # Módulo para pausar (sleep)
-import datetime   # Módulo para fechas y horas
-# ---------------------------------------------
+# --- SOLUCIÓN DEFINITIVA AL ERROR ---
+import time as tm  # Le ponemos un apodo 'tm' para que Python NO se confunda nunca más
+import datetime    # Usamos datetime completo
+# ------------------------------------
 
 # --- CONEXIÓN CON CONFIG.PY ---
 ruta_raiz = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
@@ -91,8 +91,8 @@ with tab_retro:
                     batch = db.batch()
                     batch.update(ref_stock.document(pid_sel), {"variantes": mis_vars})
                     
-                    # USO CORRECTO DE FECHA/HORA
-                    hora_fija = datetime.time(12, 0, 0) # Hora del reloj
+                    # USAMOS datetime.time DIRECTAMENTE
+                    hora_fija = datetime.time(12, 0, 0)
                     fecha_full = datetime.datetime.combine(fecha_elegida, hora_fija)
                     
                     desc = f"{info['modelo']} ({mi_var['talle']} {mi_var['color']})"
@@ -109,8 +109,8 @@ with tab_retro:
                     batch.commit()
                     st.success("Guardado.")
                     
-                    # USO CORRECTO DEL PAUSAR
-                    time.sleep(1) 
+                    # --- AQUI USAMOS EL APODO 'tm' ---
+                    tm.sleep(1) 
                     st.rerun()
                 except Exception as e:
                     st.error(str(e))
@@ -134,7 +134,9 @@ with tab_producto:
         if st.button("🔥 Eliminar Definitivamente", type="primary"):
             db.collection(COLECCION_PRODUCTOS).document(id_del).delete()
             st.toast("Eliminado")
-            time.sleep(1)
+            
+            # --- AQUI USAMOS EL APODO 'tm' ---
+            tm.sleep(1)
             st.rerun()
 
 # ==============================================================================
@@ -150,11 +152,9 @@ with tab_ventas:
     for doc in docs_m:
         d = doc.to_dict()
         if d.get('tipo') in ['Venta', 'Venta Retroactiva']:
-            # Manejo de fecha
             f_obj = d.get('fecha')
             f_str = f_obj.strftime('%d/%m %H:%M') if f_obj else "S/F"
             
-            # Manejo de productos
             prods = d.get('productos', [])
             p_txt = ", ".join(prods) if isinstance(prods, list) else str(d.get('producto_modelo', 'Varios'))
             
@@ -174,6 +174,7 @@ with tab_ventas:
             if st.button("🗑️ Confirmar Borrado", type="primary"):
                 ref_movs.document(id_mov).delete()
                 st.success("Venta eliminada.")
-                # USO CORRECTO DEL PAUSAR
-                time.sleep(1.5) 
+                
+                # --- SOLUCION DEFINITIVA: USAMOS 'tm' ---
+                tm.sleep(1.5) 
                 st.rerun()
