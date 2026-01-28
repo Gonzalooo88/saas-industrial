@@ -32,22 +32,20 @@ if not bloqueo:
     st.info("Activa el interruptor para editar.")
     st.stop()
 
-# --- HELPER INTELIGENTE (CORREGIDO) ---
+# --- HELPER INTELIGENTE ---
 def formatear_variante_admin(var_dict):
     """Crea un texto legible de la variante sin importar qué atributos tenga"""
-    partes = [] # <--- Definido en español
+    partes = [] 
     ignorar = ['stock', 'sku']
     for k, v in var_dict.items():
         if k not in ignorar:
             partes.append(str(v))
-    
-    # CORRECCIÓN: Aquí decía 'parts' antes, ahora dice 'partes'
     return " - ".join(partes) if partes else "Único"
 
 tab_retro, tab_producto, tab_ventas = st.tabs([
     "📅 Cargar Venta Pasada", 
     "📦 Eliminar Producto", 
-    "🗑️ Eliminar Venta"
+    "🗑️ Eliminar Movimiento (Venta/Repo)" # <-- Nombre actualizado
 ])
 
 # ==============================================================================
@@ -159,38 +157,53 @@ with tab_producto:
                 st.rerun()
 
 # ==============================================================================
-# TAB 3: BORRAR VENTA
+# TAB 3: BORRAR MOVIMIENTO (VENTA O REPOSICIÓN)
 # ==============================================================================
 with tab_ventas:
-    st.subheader("Anular Venta")
+    st.subheader("Anular Movimiento (Venta o Reposición)")
+    st.markdown("Aquí puedes eliminar tanto ventas mal cobradas como reposiciones de stock erróneas.")
     
+    # Traemos los últimos 50 movimientos de CUALQUIER tipo
     docs_m = ref_movimientos.order_by("fecha", direction="DESCENDING").limit(50).stream()
     
     lista_m = []
     for doc in docs_m:
         d = doc.to_dict()
-        if d.get('tipo') in ['Venta', 'Venta Retroactiva']:
+        tipo = d.get('tipo', 'Desconocido')
+        
+        # Filtramos solo lo que nos interesa borrar
+        if tipo in ['Venta', 'Venta Retroactiva', 'Reposición']:
             f_obj = d.get('fecha')
             f_str = f_obj.strftime('%d/%m %H:%M') if f_obj else "S/F"
             
             prods = d.get('productos', [])
             p_txt = ", ".join(prods) if isinstance(prods, list) else str(d.get('producto_modelo', 'Varios'))
+            monto = d.get('monto', 0)
             
-            lbl = f"{f_str} | {p_txt} | ${d.get('monto', 0):,.0f}"
-            lista_m.append((lbl, doc.id))
+            # Icono visual para distinguir rápido
+            icono = "🟢" if monto > 0 else "🔴" # Verde ingreso, Rojo gasto
+            
+            lbl = f"{icono} {tipo} | {f_str} | {p_txt} | ${abs(monto):,.0f}"
+            lista_m.append((lbl, doc.id, tipo))
 
     if not lista_m:
-        st.info("No hay ventas recientes.")
+        st.info("No hay movimientos recientes.")
     else:
-        opcion = st.selectbox("Selecciona venta a anular", lista_m, format_func=lambda x: x[0])
+        opcion = st.selectbox("Selecciona movimiento a anular", lista_m, format_func=lambda x: x[0])
         
         if opcion:
-            lbl_sel, id_mov = opcion
-            st.error(f"Vas a borrar: {lbl_sel}")
-            st.caption("Nota: El stock NO se repone automáticamente al borrar la venta.")
+            lbl_sel, id_mov, tipo_mov = opcion
+            
+            st.divider()
+            st.error(f"Vas a eliminar: {lbl_sel}")
+            
+            if tipo_mov == 'Reposición':
+                st.warning("⚠️ Al borrar una reposición, el dinero reinvertido desaparecerá del gráfico, PERO el stock agregado NO se descontará solo. Debes ajustarlo manualmente si es necesario.")
+            else:
+                st.warning("⚠️ Al borrar una venta, el dinero desaparecerá de la caja, PERO el stock NO se devuelve solo.")
             
             if st.button("🗑️ Confirmar Borrado", type="primary"):
                 ref_movimientos.document(id_mov).delete()
-                st.toast("Venta eliminada") 
-                tm.sleep(1)
+                st.toast("Movimiento eliminado correctamente") 
+                tm.sleep(1.5)
                 st.rerun()
