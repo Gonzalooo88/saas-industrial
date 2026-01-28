@@ -1,125 +1,128 @@
 import streamlit as st
+import time as tm # Usamos tm para evitar errores
 import os
-from config import db 
+import sys
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Portal de Acceso", layout="wide", page_icon="🔒")
+st.set_page_config(page_title="Acceso SaaS", page_icon="🔐", layout="centered")
+
+# --- CONEXIÓN A LA BASE DE DATOS ---
+try:
+    from config import db
+except ImportError:
+    st.error("❌ Error: No se encuentra config.py")
+    st.stop()
 
 # --- GESTIÓN DE SESIÓN ---
-if 'password_correct' not in st.session_state:
-    st.session_state.password_correct = False
+if 'logueado' not in st.session_state:
+    st.session_state.logueado = False
 if 'usuario' not in st.session_state:
-    st.session_state.usuario = None
+    st.session_state.usuario = ""
 if 'rol' not in st.session_state:
-    st.session_state.rol = None
-if 'empresa_id' not in st.session_state:
-    st.session_state.empresa_id = None
+    st.session_state.rol = ""
+if 'carpeta_cliente' not in st.session_state:
+    st.session_state.carpeta_cliente = ""
 
-# --- DETECTAR SI HAY UN LINK MÁGICO (?cliente=facha_shila) ---
-# Esto permite que si entran con el link especial, el campo se llene solo
-query_params = st.query_params
-empresa_url = query_params.get("cliente", None)
-
-# --- PANTALLA DE LOGIN ---
-def login_screen():
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("## 🔐 Ingreso al Sistema")
-        st.caption("Introduce tus credenciales.")
+# ==============================================================================
+# FUNCIÓN DE LOGIN
+# ==============================================================================
+def login():
+    st.title("🔐 Iniciar Sesión")
+    st.markdown("Bienvenido al Sistema de Gestión.")
+    
+    with st.form("login_form"):
+        user_input = st.text_input("Usuario")
+        pass_input = st.text_input("Contraseña", type="password")
         
-        with st.form("login_form"):
-            # 1. CÓDIGO DE EMPRESA (Ahora es Texto, no Lista)
-            if empresa_url:
-                # Si viene del link, lo mostramos bloqueado (más pro)
-                empresa_input = st.text_input("🏢 Código de Empresa", value=empresa_url, disabled=True)
-                st.caption("🔒 Empresa detectada automáticamente por el enlace.")
-            else:
-                # Si entra directo, tiene que escribirlo
-                empresa_input = st.text_input("🏢 Código de Empresa (ID)", placeholder="Ej: facha_shila")
-            
-            st.divider()
-            
-            # 2. CREDENCIALES
-            usuario = st.text_input("Usuario")
-            password = st.text_input("Contraseña", type="password")
-            
-            submit = st.form_submit_button("Ingresar", use_container_width=True)
-            
-            if submit:
-                # Validaciones
-                if not empresa_input or not usuario or not password:
-                    st.warning("⚠️ Por favor completa todos los campos.")
-                    return
+        if st.form_submit_button("Ingresar", type="primary"):
+            if not user_input or not pass_input:
+                st.warning("Por favor ingrese usuario y contraseña.")
+                return
 
-                # Normalizamos el ID (minusculas, sin espacios extra)
-                empresa_id_clean = empresa_input.lower().strip()
+            try:
+                # 1. BUSCAMOS EN LA GUÍA GLOBAL (La que crea tu Admin Nuevo)
+                users_ref = db.collection('saas_usuarios_global')
+                query = users_ref.where('usuario', '==', user_input).where('password', '==', pass_input).stream()
                 
-                # Verificar si la carpeta existe (Si el cliente es real)
-                path_cliente = os.path.join("instancias_clientes", empresa_id_clean)
+                results = list(query)
                 
-                if not os.path.exists(path_cliente):
-                    # SEGURIDAD: Mensaje genérico para no dar pistas
-                    st.error("❌ Error: Empresa o usuario incorrecto.") 
-                    return
-
-                # --- VALIDACIÓN EN BASE DE DATOS ---
-                collection_name = f"{empresa_id_clean}_usuarios"
-                doc_ref = db.collection(collection_name).document(usuario)
-                doc = doc_ref.get()
-
-                if doc.exists:
-                    data = doc.to_dict()
+                if len(results) == 0:
+                    st.error("Usuario o contraseña incorrectos.")
+                else:
+                    user_data = results[0].to_dict()
                     
-                    if not data.get('activo', True):
-                        st.error("🚫 Cuenta deshabilitada.")
+                    # 2. VERIFICAMOS SI EL USUARIO ESTÁ ACTIVO (Toggle Individual)
+                    if not user_data.get('activo', True):
+                        st.error("⛔ Tu usuario ha sido deshabilitado por el administrador.")
                         return
 
-                    if data.get('pass') == password:
-                        st.session_state.password_correct = True
-                        st.session_state.usuario = usuario
-                        st.session_state.rol = data.get('rol', 'vendedor')
-                        st.session_state.empresa_id = empresa_id_clean
-                        st.rerun()
+                    # 3. VERIFICAMOS SI LA EMPRESA ESTÁ ACTIVA (Toggle Maestro)
+                    carpeta = user_data.get('carpeta_instancia')
+                    instancia_doc = db.collection('instancias').document(carpeta).get()
+                    
+                    if instancia_doc.exists:
+                        instancia_data = instancia_doc.to_dict()
+                        if not instancia_data.get('activo', True):
+                            st.error("🏢 La empresa a la que perteneces está suspendida temporalmente.")
+                            return
                     else:
-                        st.error("❌ Credenciales inválidas.")
-                else:
-                    st.error("❌ Credenciales inválidas.")
+                        st.warning(f"⚠️ Error de sistema: No encuentro la carpeta '{carpeta}'. Contacta soporte.")
+                        return
 
-# --- LOGOUT ---
+                    # 4. ÉXITO: GUARDAMOS DATOS EN SESIÓN
+                    st.session_state.logueado = True
+                    st.session_state.usuario = user_data['usuario']
+                    st.session_state.rol = user_data['rol']
+                    st.session_state.carpeta_cliente = carpeta # <--- ESTA ES LA CLAVE
+                    
+                    st.success(f"Bienvenido {user_data['usuario']} ({carpeta})")
+                    tm.sleep(1)
+                    st.rerun()
+                    
+            except Exception as e:
+                st.error(f"Error de conexión: {e}")
+
+# ==============================================================================
+# FUNCIÓN DE LOGOUT
+# ==============================================================================
 def logout():
-    st.session_state.password_correct = False
-    st.session_state.usuario = None
-    st.session_state.rol = None
-    st.session_state.empresa_id = None
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
     st.rerun()
 
-# --- NAVEGACIÓN ---
-if not st.session_state.password_correct:
-    pg = st.navigation([st.Page(login_screen, title="Acceso")])
-    pg.run()
+# ==============================================================================
+# LÓGICA PRINCIPAL (NAVIGATOR)
+# ==============================================================================
+if not st.session_state.logueado:
+    login()
 else:
-    # --- CARGAR SISTEMA DEL CLIENTE ---
-    empresa_actual = st.session_state.empresa_id
-    path_cliente = os.path.join("instancias_clientes", empresa_actual)
+    # --- MENÚ LATERAL ---
+    with st.sidebar:
+        st.write(f"👤 **{st.session_state.usuario}**")
+        st.caption(f"Empresa: {st.session_state.carpeta_cliente.upper()}")
+        st.caption(f"Rol: {st.session_state.rol}")
+        
+        st.divider()
+        
+        if st.button("Cerrar Sesión"):
+            logout()
+
+    # --- RUTEO DE PÁGINAS ---
+    # Aquí definimos qué páginas ve el usuario según su rol o simplemente cargamos las de la carpeta
+    # NOTA: Como ahora usamos una estructura estándar, las páginas deberían ser genéricas.
     
-    paginas = []
+    # IMPORTANTE: Aquí es donde conectaremos tus archivos 1_ventas.py, etc.
+    # Por ahora, usaré un selector simple para probar que el login funciona.
     
-    if os.path.exists(path_cliente):
-        archivos = [f for f in os.listdir(path_cliente) if f.endswith(".py") and "__" not in f]
-        for archivo in archivos:
-            ruta = os.path.join(path_cliente, archivo)
-            nombre = archivo.replace(".py", "").replace("_", " ").title()
-            paginas.append(st.Page(ruta, title=nombre))
-        paginas.sort(key=lambda x: x.title)
+    pg = st.navigation([
+        st.Page("instancias_clientes/facha_shila/1_ventas.py", title="💰 Ventas", icon="🛒"),
+        st.Page("instancias_clientes/facha_shila/2_stock.py", title="📦 Stock", icon="📦"),
+        st.Page("instancias_clientes/facha_shila/3_caja.py", title="💵 Caja", icon="qh"),
+        st.Page("instancias_clientes/facha_shila/4_admin.py", title="⚙️ Admin Local", icon="⚙️"),
+    ])
     
-    if paginas:
-        pg = st.navigation(paginas)
-        with st.sidebar:
-            st.subheader(f"🏢 {empresa_actual.replace('_', ' ').title()}")
-            st.divider()
-            st.write(f"👤 **{st.session_state.usuario}**")
-            if st.button("Salir", type="primary", use_container_width=True):
-                logout()
+    try:
         pg.run()
-    else:
-        st.error("No se encontraron módulos.")
+    except Exception as e:
+        st.error(f"Error cargando la página: {e}")
+        st.info("💡 Nota: Las páginas de Ventas/Stock darán error hasta que las actualicemos para usar la 'carpeta_cliente' nueva.")
