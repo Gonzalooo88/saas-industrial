@@ -63,7 +63,6 @@ st.markdown("""
         text-transform: uppercase;
         letter-spacing: 0.5px;
     }
-    /* Contenedor flexible para las variantes */
     .variants-container {
         display: flex;
         flex-wrap: wrap;
@@ -72,7 +71,6 @@ st.markdown("""
         padding-top: 15px;
         border-top: 1px solid #f0f0f0;
     }
-    /* Estilo de cada "píldora" de variante */
     .variant-pill {
         background-color: #f8f9fa;
         border: 1px solid #eee;
@@ -90,26 +88,25 @@ st.markdown("""
         border-radius: 4px;
         font-size: 0.85rem;
     }
-    .qty-high { background-color: #e8f5e9; color: #2e7d32; } /* Verde claro */
-    .qty-low { background-color: #ffebee; color: #c62828; }  /* Rojo claro */
-    
+    .qty-high { background-color: #e8f5e9; color: #2e7d32; } 
+    .qty-low { background-color: #ffebee; color: #c62828; }  
     </style>
 """, unsafe_allow_html=True)
 
 # --- HELPER ---
 def formatear_variante_texto(var_dict):
-    parts = []
+    partes = []
     ignorar = ['stock', 'sku']
     for k, v in var_dict.items():
         if k not in ignorar:
-            parts.append(str(v))
-    return " - ".join(parts) if parts else "Único"
+            partes.append(str(v))
+    return " - ".join(partes) if partes else "Único"
 
 # --- PESTAÑAS ---
 tab_ver, tab_reponer, tab_nuevo = st.tabs(["👁️ Visualizar Stock", "🔄 Reposición / Ajuste", "➕ Crear Nuevo Modelo"])
 
 # ==============================================================================
-# 1. VISUALIZAR STOCK (CORREGIDO VISUALMENTE)
+# 1. VISUALIZAR STOCK (CORREGIDO)
 # ==============================================================================
 with tab_ver:
     c1, c2 = st.columns([1, 2])
@@ -131,8 +128,7 @@ with tab_ver:
         variantes = p.get('variantes', [])
         total_stock = sum(v.get('stock', 0) for v in variantes)
         
-        # --- CONSTRUCCIÓN DEL HTML DE LAS VARIANTES ---
-        # En lugar de usar st.columns, generamos el HTML puro para meterlo dentro de la tarjeta
+        # --- CONSTRUCCIÓN ROBUSTA DEL HTML ---
         html_variantes = ""
         
         if not variantes:
@@ -143,7 +139,7 @@ with tab_ver:
                 qty = v.get('stock', 0)
                 clase_qty = "qty-high" if qty > 2 else "qty-low"
                 
-                # Creamos la "píldora" visual para cada variante
+                # Concatenamos el string
                 html_variantes += f"""
                 <div class="variant-pill">
                     <span>{desc}</span>
@@ -151,8 +147,8 @@ with tab_ver:
                 </div>
                 """
 
-        # --- RENDERIZADO DE LA TARJETA COMPLETA ---
-        st.markdown(f"""
+        # Creamos TODA la tarjeta en una sola variable string
+        tarjeta_html = f"""
         <div class="stock-card">
             <div style="display:flex; justify-content:space-between; align-items:start;">
                 <div>
@@ -171,7 +167,10 @@ with tab_ver:
                 {html_variantes}
             </div>
         </div>
-        """, unsafe_allow_html=True)
+        """
+        
+        # Renderizamos con unsafe_allow_html ACTIVADO
+        st.markdown(tarjeta_html, unsafe_allow_html=True)
 
     if not encontrados:
         st.info("No se encontraron productos con los filtros actuales.")
@@ -183,86 +182,89 @@ with tab_reponer:
     st.header("🔄 Reposición de Mercadería")
     
     all_prods = list(ref_productos.stream())
-    opciones_prod = {d.id: f"{d.to_dict().get('modelo')} ({d.to_dict().get('categoria')})" for d in all_prods}
-    
-    sel_id = st.selectbox("Buscar Producto a Reponer", options=list(opciones_prod.keys()), format_func=lambda x: opciones_prod[x])
-    
-    if sel_id:
-        ref_doc = ref_productos.document(sel_id)
-        data = ref_doc.get().to_dict()
-        categoria_actual = data.get('categoria', 'Otro')
-        campos_categoria = CATEGORIAS.get(categoria_actual, ["Detalle"])
+    if not all_prods:
+        st.warning("No hay productos cargados.")
+    else:
+        opciones_prod = {d.id: f"{d.to_dict().get('modelo')} ({d.to_dict().get('categoria')})" for d in all_prods}
         
-        st.divider()
+        sel_id = st.selectbox("Buscar Producto a Reponer", options=list(opciones_prod.keys()), format_func=lambda x: opciones_prod[x])
         
-        # --- PRECIOS ---
-        c_p1, c_p2, c_p3 = st.columns(3)
-        n_costo = c_p1.number_input("Costo Unitario ($)", value=float(data.get('costo', 0)))
-        n_precio = c_p2.number_input("Precio Venta ($)", value=float(data.get('precio_venta', 0)))
-        n_ganancia = n_precio - n_costo
-        c_p3.metric("Nueva Ganancia", f"${n_ganancia:,.0f}")
-        
-        st.divider()
-        
-        # --- STOCK ---
-        st.subheader("📦 Ingresar Stock")
-        st.info(f"Campos: {', '.join(campos_categoria)}")
-        
-        cols_input = st.columns(len(campos_categoria) + 1)
-        inputs_repo = {}
-        
-        for i, campo in enumerate(campos_categoria):
-            inputs_repo[campo] = cols_input[i].text_input(f"{campo}", key=f"repo_{campo}")
+        if sel_id:
+            ref_doc = ref_productos.document(sel_id)
+            data = ref_doc.get().to_dict()
+            categoria_actual = data.get('categoria', 'Otro')
+            campos_categoria = CATEGORIAS.get(categoria_actual, ["Detalle"])
             
-        cant_repo = cols_input[-1].number_input("Cantidad (+)", min_value=1, value=1)
-        
-        if st.button("💾 CONFIRMAR REPOSICIÓN", type="primary"):
-            missing = [k for k, v in inputs_repo.items() if not v]
-            if missing and categoria_actual != "Mascarilla":
-                st.error(f"Falta: {', '.join(missing)}")
-            else:
-                batch = db.batch()
-                batch.update(ref_doc, {"costo": n_costo, "precio_venta": n_precio, "ganancia": n_ganancia})
+            st.divider()
+            
+            # --- PRECIOS ---
+            c_p1, c_p2, c_p3 = st.columns(3)
+            n_costo = c_p1.number_input("Costo Unitario ($)", value=float(data.get('costo', 0)))
+            n_precio = c_p2.number_input("Precio Venta ($)", value=float(data.get('precio_venta', 0)))
+            n_ganancia = n_precio - n_costo
+            c_p3.metric("Nueva Ganancia", f"${n_ganancia:,.0f}")
+            
+            st.divider()
+            
+            # --- STOCK ---
+            st.subheader("📦 Ingresar Stock")
+            st.info(f"Campos: {', '.join(campos_categoria)}")
+            
+            cols_input = st.columns(len(campos_categoria) + 1)
+            inputs_repo = {}
+            
+            for i, campo in enumerate(campos_categoria):
+                inputs_repo[campo] = cols_input[i].text_input(f"{campo}", key=f"repo_{campo}")
                 
-                vars_actuales = data.get('variantes', [])
-                found = False
-                inputs_clean = {k: v.strip().title() for k, v in inputs_repo.items()}
-                new_vars_list = []
-                
-                for v in vars_actuales:
-                    coincide = True
-                    for campo in campos_categoria:
-                        if str(v.get(campo.lower(), '')).lower() != inputs_clean[campo].lower():
-                            coincide = False
-                            break
-                    if coincide:
-                        v['stock'] += cant_repo
-                        found = True
-                    new_vars_list.append(v)
-                
-                if not found:
-                    new_v = {k.lower(): v for k, v in inputs_clean.items()}
-                    new_v['stock'] = cant_repo
-                    new_vars_list.append(new_v)
+            cant_repo = cols_input[-1].number_input("Cantidad (+)", min_value=1, value=1)
+            
+            if st.button("💾 CONFIRMAR REPOSICIÓN", type="primary"):
+                missing = [k for k, v in inputs_repo.items() if not v]
+                if missing and categoria_actual != "Mascarilla":
+                    st.error(f"Falta: {', '.join(missing)}")
+                else:
+                    batch = db.batch()
+                    batch.update(ref_doc, {"costo": n_costo, "precio_venta": n_precio, "ganancia": n_ganancia})
+                    
+                    vars_actuales = data.get('variantes', [])
+                    found = False
+                    inputs_clean = {k: v.strip().title() for k, v in inputs_repo.items()}
+                    new_vars_list = []
+                    
+                    for v in vars_actuales:
+                        coincide = True
+                        for campo in campos_categoria:
+                            if str(v.get(campo.lower(), '')).lower() != inputs_clean[campo].lower():
+                                coincide = False
+                                break
+                        if coincide:
+                            v['stock'] += cant_repo
+                            found = True
+                        new_vars_list.append(v)
+                    
+                    if not found:
+                        new_v = {k.lower(): v for k, v in inputs_clean.items()}
+                        new_v['stock'] = cant_repo
+                        new_vars_list.append(new_v)
 
-                batch.update(ref_doc, {"variantes": new_vars_list})
-                
-                # Movimiento
-                mid = f"REP-{int(tm.time())}"
-                desc_texto = f"{data['modelo']} - {', '.join(inputs_clean.values())} (+{cant_repo})"
-                
-                batch.set(ref_movimientos.document(mid), {
-                    "tipo": "Reposición",
-                    "monto": -(n_costo * cant_repo),
-                    "fecha": datetime.now(),
-                    "productos": [desc_texto],
-                    "vendedor": st.session_state.get('usuario', 'Sistema')
-                })
-                
-                batch.commit()
-                st.success("✅ Stock actualizado.")
-                tm.sleep(1.5)
-                st.rerun()
+                    batch.update(ref_doc, {"variantes": new_vars_list})
+                    
+                    # Movimiento
+                    mid = f"REP-{int(tm.time())}"
+                    desc_texto = f"{data['modelo']} - {', '.join(inputs_clean.values())} (+{cant_repo})"
+                    
+                    batch.set(ref_movimientos.document(mid), {
+                        "tipo": "Reposición",
+                        "monto": -(n_costo * cant_repo),
+                        "fecha": datetime.now(),
+                        "productos": [desc_texto],
+                        "vendedor": st.session_state.get('usuario', 'Sistema')
+                    })
+                    
+                    batch.commit()
+                    st.success("✅ Stock actualizado.")
+                    tm.sleep(1.5)
+                    st.rerun()
 
 # ==============================================================================
 # 3. CREAR NUEVO
